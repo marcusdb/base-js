@@ -59,6 +59,8 @@ module.exports = function(grunt) {
       }
     },
 
+    
+
     // This task uses the MinCSS Node.js project to take all your CSS files in
     // order and concatenate them into a single CSS file named index.css.  It
     // also minifies all the CSS as well.  This is named index.css, because we
@@ -177,7 +179,27 @@ module.exports = function(grunt) {
     watch: {
       files: ["grunt.js", "assets/**/*", "app/**/*"],
       tasks: "styles"
-    }
+    },
+    // The handlebars task compiles all application templates into JavaScript
+    // functions using Handlebars templating engine.
+    //
+    // Since this task defaults to writing to the same file as the jst task,
+    // edit the debug task replacing jst with handlebars.
+    //
+    // The concat task depends on this file to exist, so if you decide to
+    // remove this, ensure concat is updated accordingly.
+    handlebarsWithOptions: {
+
+      built: {
+        src: ['app/templates/**/*.html'],
+        dest: 'dist/debug/templates.js',
+        options: {
+          data: true,
+          stringParams: true
+        }
+      }
+
+    },
 
   });
 
@@ -186,10 +208,93 @@ module.exports = function(grunt) {
   // dist/debug/templates.js, compile all the application code into
   // dist/debug/require.js, and then concatenate the require/define shim
   // almond.js and dist/debug/templates.js into the require.js file.
-  grunt.registerTask("debug", "clean lint jst requirejs concat styles");
+  grunt.registerTask("debug", "clean lint handlebarsWithOptions requirejs concat styles");
 
   // The release task will run the debug tasks and then minify the
   // dist/debug/require.js file and CSS files.
   grunt.registerTask("release", "debug min mincss");
+
+
+
+  //filename conversion for templates
+  var defaultProcessName = function(name) {
+    return name;
+  };
+
+  // filename conversion for partials
+  var defaultProcessPartialName = function(filePath) {
+    var pieces = _.last(filePath.split("/")).split(".");
+    var name = _(pieces).without(_.last(pieces)).join("."); // strips file extension
+    return name.substr(1, name.length); // strips leading _ character
+  };
+
+  var escapeQuote = function(name) {
+    return name.replace("'", "\\'");
+  };
+
+  var _ = grunt.util._;
+
+  grunt.registerMultiTask("handlebarsWithOptions", "Compile handlebars templates and partials.", function() {
+
+    var options = grunt.helper("options", this, {
+      namespace: "JST"
+    });
+    var opt = this.data.options;
+
+    grunt.verbose.writeflags(options, "Options");
+
+    // TODO: ditch this when grunt v0.4 is released
+    this.files = this.files || grunt.helper("normalizeMultiTaskFiles", this.data, this.target);
+
+    var compiled, srcFiles, src, filename;
+    var partials = [];
+    var templates = [];
+    var output = [];
+    var namespace = "this['" + options.namespace + "']";
+
+    // assign regex for partial detection
+    var isPartial = options.partialRegex || /^_/;
+
+    // assign filename transformation functions
+    var processName = options.processName || defaultProcessName;
+    var processPartialName = options.processName || defaultProcessPartialName;
+
+    // iterate files, processing partials and templates separately
+    this.files.forEach(function(files) {
+      srcFiles = grunt.file.expandFiles(files.src);
+      srcFiles.forEach(function(file) {
+        src = grunt.file.read(file);
+
+        try {
+
+          compiled = require("handlebars").precompile(src, opt);
+
+          // if configured to, wrap template in Handlebars.template call
+          if (options.wrapped) {
+            compiled = "Handlebars.template(" + compiled + ")";
+          }
+        } catch (e) {
+          grunt.log.error(e);
+          grunt.fail.warn("Handlebars failed to compile " + file + ".");
+        }
+
+        // register partial or add template to namespace
+        if (isPartial.test(_.last(file.split("/")))) {
+          filename = escapeQuote(processPartialName(file));
+          partials.push("Handlebars.registerPartial('" + filename + "', " + compiled + ");");
+        } else {
+          filename = escapeQuote(processName(file));
+          templates.push(namespace + "['" + filename + "'] = " + compiled + ";");
+        }
+      });
+      output = output.concat(partials, templates);
+
+      if (output.length > 0) {
+        output.unshift(namespace + " = " + namespace + " || {};");
+        grunt.file.write(files.dest, output.join("\n\n"));
+        grunt.log.writeln("File '" + files.dest + "' created.");
+      }
+    });
+  });
 
 };
