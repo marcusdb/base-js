@@ -18,7 +18,7 @@ require.config({
     amplify: "../assets/js/libs/amplify",
     JSON: "../assets/js/libs/json2",
     d3: "../assets/js/libs/d3.v3",
-    bootstrap:"../assets/js/libs/bootstrap.js"
+    bootstrap:"../assets/js/libs/bootstrap"
 
 
   },

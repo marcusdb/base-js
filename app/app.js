@@ -1,9 +1,9 @@
 define([
 		// Libraries.
-		"JSON", "jquery", "lodash", "backbone", "handlebars",
+		"JSON", "jquery", "lodash", "backbone", "handlebars","d3", "bootstrap",
 
 		// Plugins.
-		"plugins/backbone.layoutmanager", "plugins/jquery.cookie", "plugins/jquery.jqtransform", "plugins/jquery.wipetouch"
+		"plugins/backbone.layoutmanager", "plugins/jquery.cookie"
 	],
 
 	function(JSON, $, _, Backbone, Handlebars) {

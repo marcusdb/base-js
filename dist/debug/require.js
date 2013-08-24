@@ -17328,2854 +17328,6 @@ define("handlebars", (function (global) {
     };
 }(this)));
 
-/*!
- * backbone.layoutmanager.js v0.6.5
- * Copyright 2012, Tim Branyen (@tbranyen)
- * backbone.layoutmanager.js may be freely distributed under the MIT license.
- */
-(function(window) {
-
-
-
-// Used to keep track of all LayoutManager key names.
-var keys;
-
-// Alias the libraries from the global object.
-var Backbone = window.Backbone;
-var _ = window._;
-var $ = window.$;
-
-// Store references to original View functions.
-var _configure = Backbone.View.prototype._configure;
-var render = Backbone.View.prototype.render;
-
-// A LayoutManager is simply a Backbone.View with some sugar.
-var LayoutManager = Backbone.View.extend({
-  // This named function allows for significantly easier debugging.
-  constructor: function Layout(options) {
-    // Options should always a valid object.
-    options = options || {};
-
-    // Give this View superpowers.
-    LayoutManager.setupView(this, options);
-
-    // Have Backbone set up the rest of this View.
-    Backbone.View.call(this, options);
-  },
-
-  // Swap the current layout to  new layout.
-  swapLayout: function(newLayout) {
-    // Set Views to be a hybrid of original and new layout.
-    newLayout.views = _.defaults({}, this.views, newLayout.views);
-
-    // Re-use the same layout DOM element.
-    newLayout.setElement(this.el);
-
-    // Allow for chainability.
-    return newLayout;
-  },
-
-  // Shorthand to root.view function with append flag.
-  insertView: function(selector, view) {
-    // If a selector was passed, forward that onto setView.
-    if (view) {
-      return this.setView(selector, view, true);
-    }
-
-    // Omitting a selector will place the View directly into the parent.
-    return this.setView(selector, true);
-  },
-
-  // Works like insertView, except allows you to bulk insert via setViews.
-  insertViews: function(views) {
-    // Ensure each view is wrapped in an array.
-    _.each(views, function(view, selector) {
-      views[selector] = [].concat(view);
-    });
-
-    return this.setViews(views);
-  },
-
-  // Will return a single view that matches the filter function.
-  getView: function(fn) {
-    return this.getViews(fn).first().value();
-  },
-
-  // Provide a filter function to get a flattened array of all the subviews.
-  // If the filter function is omitted it will return all subviews.
-  getViews: function(fn) {
-    // Flatten all views.
-    var views = _.chain(this.views).map(function(view) {
-      return [].concat(view);
-    }, this).flatten().value();
-
-    // Return a wrapped function to allow for easier chaining.
-    return _.chain(_.filter(views, fn ? fn : _.identity));
-  },
-
-  // This takes in a partial name and view instance and assigns them to
-  // the internal collection of views.  If a view is not a LayoutManager
-  // instance, then mix in the LayoutManager prototype.  This ensures
-  // all Views can be used successfully.
-  //
-  // Must definitely wrap any render method passed in or defaults to a
-  // typical render function `return layout(this).render()`.
-  setView: function(name, view, append) {
-    var partials, options;
-    var root = this;
-
-    // If no name was passed, use an empty string and shift all arguments.
-    if (!_.isString(name)) {
-      append = view;
-      view = name;
-      name = "";
-    }
-
-    // If the parent View's object, doesn't exist... create it.
-    this.views = this.views || {};
-
-    // Ensure remove is called when swapping View's.
-    if (!append && this.views[name]) {
-      // If the views are an array, iterate and remove each individually.
-      if (_.isArray(this.views[name])) {
-        _.each(this.views[name], function(view) {
-          view.remove();
-        });
-      // Otherwise it's a single view and can safely call remove.
-      } else {
-        this.views[name].remove();
-      }
-    }
-
-    // Instance overrides take precedence, fallback to prototype options.
-    options = view._options();
-
-    // Set up the View, if it's not already managed.
-    if (!view.__manager__) {
-      LayoutManager.setupView(view, options);
-    }
-
-    // Custom template render function.
-    view.render = function(done) {
-      var viewDeferred = options.deferred();
-      var manager = view.__manager__;
-
-      // Ensure the latest deferred is assigned.
-      manager.viewDeferred = viewDeferred;
-      
-      // Break this callback out so that its not duplicated inside the 
-      // following safety try/catch.
-      function renderCallback() {
-        // List items should not be re-added, unless they have `keep: true`
-        // set.
-        if ((!append || view.keep) || !manager.hasRendered) {
-          options.partial(root.el, name, view.el, append);
-        }
-
-        // Ensure events are always correctly bound after rendering.
-        view.delegateEvents();
-
-        // If the View has a managed handler, resolve and remove it.
-        if (manager.handler) {
-          // Resolve the View's render handler deferred.
-          manager.handler.resolveWith(view, [view.el]);
-
-          // Remove the handler once it has resolved.
-          delete manager.handler;
-        }
-
-        // When a view has been resolved, ensure that it is correctly updated
-        // and that any done callbacks are triggered.
-        viewDeferred.resolveWith(view, [view.el]);
-
-        // Only call the done function if a callback was provided.
-        if (_.isFunction(done)) {
-          done.call(view, view.el);
-        }
-      }
-
-      // Remove subViews without the `keep` flag set to `true`.
-      view._removeView();
-
-      // Call the original render method.
-      LayoutManager.prototype.render.call(view).then(renderCallback);
-
-      // Return the promise for chainability.
-      return viewDeferred.promise();
-    };
-
-    // Add reference to the parentView.
-    view.__manager__.parent = root;
-    // Add reference to the placement selector used.
-    view.__manager__.selector = name;
-
-    // Special logic for appending items. List items are represented as an
-    // array.
-    if (append) {
-      // Start with an array if none exists.
-      partials = this.views[name] = this.views[name] || [];
-      
-      if (!_.isArray(this.views[name])) {
-        // Ensure this.views[name] is an array.
-        partials = this.views[name] = [this.views[name]];
-      }
-
-      // Ensure the View is not already added to the list.  If it is, bail out
-      // early.
-      if (_.indexOf(partials, view) > -1) {
-        return view;
-      }
-
-      // Add the view to the list of partials.
-      partials.push(view);
-
-      // Put the view into `append` mode.
-      view.__manager__.append = true;
-
-      return view;
-    }
-
-    // Assign to main views object and return for chainability.
-    return this.views[name] = view;
-  },
-
-  // Allows the setting of multiple views instead of a single view.
-  setViews: function(views) {
-    // Iterate over all the views and use the View's view method to assign.
-    _.each(views, function(view, name) {
-      // If the view is an array put all views into insert mode.
-      if (_.isArray(view)) {
-        return _.each(view, function(view) {
-          this.insertView(name, view);
-        }, this);
-      }
-
-      // Assign each view using the view function.
-      this.setView(name, view);
-    }, this);
-
-    // Allow for chaining
-    return this;
-  },
-
-  // By default this should find all nested views and render them into
-  // the this.el and call done once all of them have successfully been
-  // resolved.
-  //
-  // This function returns a promise that can be chained to determine
-  // once all subviews and main view have been rendered into the view.el.
-  render: function(done) {
-    var root = this;
-    var options = this._options();
-    var viewDeferred = options.deferred();
-
-    // Ensure duplicate renders don't override.
-    if (this.__manager__.renderDeferred) {
-      // Set the most recent done callback.
-      this.__manager__.callback = done;
-
-      // Return the deferred.
-      return this.__manager__.renderDeferred;
-    }
-    
-    // Wait until this View has rendered before dealing with nested Views.
-    this._render(LayoutManager._viewRender).fetch.then(function() {
-      // Disable the ability for any new sub-views to be added.
-      root.__manager__.renderDeferred = viewDeferred;
-
-      // Create a list of promises to wait on until rendering is done. Since
-      // this method will run on all children as well, its sufficient for a
-      // full hierarchical. 
-      var promises = _.map(root.views, function(view) {
-        // Hoist deferred var, used later on...
-        var def;
-
-        // Ensure views are rendered in sequence
-        function seqRender(views, done) {
-          // Once all views have been rendered invoke the sequence render
-          // callback.
-          if (!views.length) {
-            return done();
-          }
-
-          // Get each view in order, grab the first one off the stack.
-          var view = views.shift();
-
-          // Render the View and once complete call the next view.
-          view.render(function() {
-            // Invoke the recursive sequence render function with the
-            // remaining views.
-            seqRender(views, done);
-          });
-        }
-
-        // If rendering a list out, ensure they happen in a serial order.
-        if (_.isArray(view)) {
-          // A singular deferred that represents all the items.
-          def = options.deferred();
-
-          seqRender(_.clone(view), function() {
-            def.resolve();
-          });
-
-          return def.promise();
-        }
-
-        // Only return the fetch deferred, resolve the main deferred after
-        // the element has been attached to it's parent.
-        return view.render();
-      });
-
-      // Once all subViews have been rendered, resolve this View's deferred.
-      options.when(promises).then(function() {
-        viewDeferred.resolveWith(root, [root.el]);
-      });
-    });
-
-    // Return a promise that resolves once all immediate subViews have
-    // rendered.
-    return viewDeferred.then(function() {
-      // Only call the done function if a callback was provided.
-      if (_.isFunction(done)) {
-        done.call(root, root.el);
-      }
-
-      if (root.__manager__.handler) {
-        root.__manager__.handler.resolveWith(root, [root.el]);
-
-        // Remove the handler, so it's never accidentally referenced.
-        delete root.__manager__.handler;
-      }
-
-      // If the render was called twice, there is a possibility that the
-      // callback style was used twice.  This will ensure the latest callback
-      // is also triggered.
-      if (_.isFunction(root.__manager__.callback)) {
-        root.__manager__.callback.call(root, root.el);
-
-        // Remove the most recent callback.
-        delete root.__manager__.callback;
-      }
-
-      // Remove the rendered deferred.
-      delete root.__manager__.renderDeferred;
-    });
-  },
-
-  // Ensure the cleanup function is called whenever remove is called.
-  remove: function() {
-    LayoutManager.cleanViews(this);
-
-    // Call the original remove function.
-    return this._remove.apply(this, arguments);
-  },
-
-  // Merge instance and global options.
-  _options: function() {
-    // Instance overrides take precedence, fallback to prototype options.
-    return _.extend({}, this, LayoutManager.prototype.options, this.options);
-  }
-},
-{
-  // Clearable cache.
-  _cache: {},
-
-  // Creates a deferred and returns a function to call when finished.
-  _makeAsync: function(options, done) {
-    var handler = options.deferred();
-
-    // Used to handle asynchronous renders.
-    handler.async = function() {
-      handler._isAsync = true;
-
-      return done;
-    };
-
-    return handler;
-  },
-
-  // This gets passed to all _render methods.
-  _viewRender: function(root) {
-    var url, contents, handler;
-    var options = root._options();
-
-    // Once the template is successfully fetched, use its contents to
-    // proceed.  Context argument is first, since it is bound for
-    // partial application reasons.
-    function done(context, contents) {
-      // Ensure the cache is up-to-date.
-      LayoutManager.cache(url, contents);
-
-      // Render the View into the el property.
-      if (contents) {
-        options.html(root.el, options.render(contents, context));
-      }
-
-      // Resolve only the fetch (used internally) deferred with the View
-      // element.
-      handler.fetch.resolveWith(root, [root.el]);
-    }
-
-    return {
-      // This render function is what gets called inside of the View render,
-      // when manage(this).render is called.  Returns a promise that can be
-      // used to know when the element has been rendered into its parent.
-      render: function(context) {
-        var manager = root.__manager__;
-        var template = root.template || options.template;
-
-        if (root.serialize) {
-          options.serialize = root.serialize;
-        }
-
-        // Seek out serialize method and use that object.
-        if (!context && _.isFunction(options.serialize)) {
-          context = options.serialize.call(root);
-        // If serialize is an object, just use that.
-        } else if (!context && _.isObject(options.serialize)) {
-          context = options.serialize;
-        }
-
-        // Create an asynchronous handler.
-        handler = LayoutManager._makeAsync(options, _.bind(done, root,
-          context));
-
-        // Make a new deferred purely for the fetch function.
-        handler.fetch = options.deferred();
-
-        // Assign the handler internally to be resolved once its inside the
-        // parent element.
-        manager.handler = handler;
-
-        // Set the url to the prefix + the view's template property.
-        if (_.isString(template)) {
-          url = manager.prefix + template;
-        }
-
-        // Check if contents are already cached.
-        if (contents = LayoutManager.cache(url)) {
-          done(context, contents, url);
-
-          return handler;
-        }
-
-        // Fetch layout and template contents.
-        if (_.isString(template)) {
-          contents = options.fetch.call(handler, manager.prefix + template);
-        // If its not a string just pass the object/function/whatever.
-        } else if (template != null) {
-          contents = options.fetch.call(handler, template);
-        }
-
-        // If the function was synchronous, continue execution.
-        if (!handler._isAsync) {
-          done(context, contents);
-        }
-
-        return handler;
-      }
-    };
-  },
-
-  // Accept either a single view or an array of views to clean of all DOM
-  // events internal model and collection references and all Backbone.Events.
-  cleanViews: function(views) {
-    // Clear out all existing views.
-    _.each([].concat(views), function(view) {
-      // Remove all custom events attached to this View.
-      view.unbind();
-
-      // Ensure all nested views are cleaned as well.
-      if (view.views) {
-        _.each(view.views, function(view) {
-          LayoutManager.cleanViews(view);
-        });
-      }
-
-      // If a custom cleanup method was provided on the view, call it after
-      // the initial cleanup is done
-      if (_.isFunction(view.cleanup)) {
-        view.cleanup.call(view);
-      }
-    });
-  },
-
-  // Cache templates into LayoutManager._cache.
-  cache: function(path, contents) {
-    // If template path is found in the cache, return the contents.
-    if (path in this._cache) {
-      return this._cache[path];
-    // Ensure path and contents aren't undefined.
-    } else if (path != null && contents != null) {
-      return this._cache[path] = contents;
-    }
-
-    // If the template is not in the cache, return undefined.
-  },
-
-  // This static method allows for global configuration of LayoutManager.
-  configure: function(opts) {
-    _.extend(LayoutManager.prototype.options, opts);
-
-    // Allow LayoutManager to manage Backbone.View.prototype.
-    if (opts.manage) {
-      Backbone.View.prototype.manage = true;
-    }
-  },
-
-  // Configure a View to work with the LayoutManager plugin.
-  setupView: function(view, options) {
-    var views, viewOptions;
-    var proto = Backbone.LayoutManager.prototype;
-    var viewOverrides = _.pick(view, keys);
-
-    // If the View has already been setup, no need to do it again.
-    if (view.__manager__) {
-      return;
-    }
-
-    // Ensure necessary properties are set.
-    _.defaults(view, {
-      // Ensure a view always has a views object.
-      views: {},
-
-      // Internal state object used to store whether or not a View has been
-      // taken over by layout manager and if it has been rendered into the DOM.
-      __manager__: {},
-
-      // Add options into the prototype.
-      _options: LayoutManager.prototype._options,
-
-      // Add the ability to remove all Views.
-      _removeView: LayoutManager._removeView
-    });
-
-    // Set the prefix for a layout.
-    if (view instanceof Backbone.Layout) {
-      view.__manager__.prefix = view._options().paths.layout || "";
-    // Set the prefix for a template.
-    } else {
-      view.__manager__.prefix = view._options().paths.template || "";
-    }
-
-    // Extend the options with the prototype and passed options.
-    options = view.options = _.defaults(options || {}, view.options,
-      proto.options);
-
-    // Ensure view events are properly copied over.
-    viewOptions = _.pick(options, ["events"].concat(_.values(options.events)));
-    _.extend(view, viewOptions);
-
-    // If the View still has the Backbone.View#render method, remove it.  Don't
-    // want it accidentally overriding the LM render.
-    delete viewOverrides.render;
-
-    // Pick out the specific properties that can be dynamically added at
-    // runtime and ensure they are available on the view object.
-    _.extend(options, viewOverrides);
-
-    // By default the original Remove function is the Backbone.View one.
-    view._remove = Backbone.View.prototype.remove;
-
-    // Always use this render function when using LayoutManager.
-    view._render = function(manage) {
-      var renderDeferred;
-      // Cache these properties.
-      var beforeRender = this._options().beforeRender;
-      var afterRender = this._options().afterRender;
-
-      // Ensure all subViews are properly scrubbed.
-      this._removeView();
-
-      // If a beforeRender function is defined, call it.
-      if (_.isFunction(beforeRender)) {
-        beforeRender.call(this, this);
-      }
-
-      // Always emit a beforeRender event.
-      this.trigger("beforeRender", this);
-
-      // Render!
-      renderDeferred = manage(this).render();
-
-      // Once rendering is complete...
-      renderDeferred.then(function() {
-        // Keep the view consistent between callbacks and deferreds.
-        var view = this;
-        // Shorthand the manager.
-        var manager = view.__manager__;
-        // Shorthand the View's parent.
-        var parent = manager.parent;
-        // This can be called immediately if the conditions allow, or it will
-        // be deferred until a parent has finished rendering.
-        var done = function() {
-          // Ensure events are always correctly bound after rendering.
-          view.delegateEvents();
-
-          // Set the view hasRendered.
-          view.__manager__.hasRendered = true;
-
-          // If an afterRender function is defined, call it.
-          if (_.isFunction(afterRender)) {
-            afterRender.call(view, view);
-          }
-
-          // Always emit an afterRender event.
-          view.trigger("afterRender", view);
-        };
-        // This function recursively loops through Views to find
-        // the most top level parent.
-        var findRootParent = function(view) {
-          var manager = view.__manager__;
-
-          // If a parent exists, recurse.
-          if (manager.parent && !manager.hasRendered) {
-            return findRootParent(manager.parent);
-          }
-
-          // This is the most root parent.
-          return view;
-        };
-
-        // If no parent exists, immediately call the done callback.
-        if (!parent) {
-          return done.call(view);
-        }
-
-        // If this view has already rendered, simply call the callback.
-        if (parent.__manager__.hasRendered) {
-          return options.when([manager.viewDeferred, parent.__manager__.viewDeferred]).then(function() {
-            done.call(view);
-          });
-        }
-
-        parent = findRootParent(view);
-
-        // Once the parent has finished rendering, trickle down and
-        // call sub-view afterRenders.
-        parent.on("afterRender", function() {
-          // Ensure its properly unbound immediately.
-          parent.off(null, null, view);
-
-          // Call the done callback.
-          done.call(view);
-        }, view);
-      });
-      return renderDeferred;
-    };
-
-    // Ensure the render is always set correctly.
-    view.render = LayoutManager.prototype.render;
-
-    // If the user provided their own remove override, use that instead of the
-    // default.
-    if (view.remove !== proto.remove) {
-      view._remove = view.remove;
-      view.remove = proto.remove;
-    }
-    
-    // Normalize views to exist on either instance or options, default to
-    // options.
-    views = options.views || view.views;
-
-    // Set the internal views, only if selectors have been provided.
-    if (_.keys(views).length) {
-      view.setViews(views);
-    }
-
-    // Ensure the template is mapped over.
-    if (view.template) {
-      options.template = view.template;
-
-      // Remove it from the instance.
-      delete view.template;
-    }
-  },
-
-  // Remove all subViews.
-  _removeView: function(root) {
-    // Allow removeView to be called on instances.
-    root = root || this;
-
-    // Iterate over all of the view's subViews.
-    root.getViews().each(function(view) {
-      // Shorthand the manager for easier access.
-      var manager = view.__manager__;
-      // Test for keep.
-      var keep = _.isBoolean(view.keep) ? view.keep : view.options.keep;
-
-      // Only remove views that do not have `keep` attribute set.
-      if (!keep && manager.append === true && manager.hasRendered) {
-        // Remove the View completely.
-        view.remove();
-
-        // If this is an array of items remove items that are not marked to
-        // keep.
-        if (_.isArray(manager.parent.views[manager.selector])) {
-          // Remove directly from the Array reference.
-          return manager.parent.getView(function(view, i) {
-            // If the selectors match, splice off this View.
-            if (view.__manager__.selector === manager.selector) {
-              manager.parent.views[manager.selector].splice(i, 1);
-            }
-          });
-        }
-
-        // Otherwise delete the parent selector.
-        delete manager.parent[manager.selector];
-      }
-    });
-  }
-});
-
-// Ensure all Views always have access to get/set/insert(View/Views).
-_.each(["get", "set", "insert"], function(method) {
-  var backboneProto = Backbone.View.prototype;
-  var layoutProto = LayoutManager.prototype;
-
-  // Attach the singular form.
-  backboneProto[method + "View"] = layoutProto[method + "View"];
-
-  // Attach the plural form.
-  backboneProto[method + "Views"] = layoutProto[method + "Views"];
-});
-
-// Convenience assignment to make creating Layout's slightly shorter.
-Backbone.Layout = Backbone.LayoutManager = LayoutManager;
-// A LayoutView is just a Backbone.View with manage set to true.
-Backbone.LayoutView = Backbone.View.extend({
-  manage: true
-});
-
-// Override _configure to provide extra functionality that is necessary in
-// order for the render function reference to be bound during initialize.
-Backbone.View.prototype._configure = function() {
-  // Run the original _configure.
-  var retVal = _configure.apply(this, arguments);
-
-  // If manage is set, do it!
-  if (this.manage) {
-    // Set up this View.
-    LayoutManager.setupView(this);
-  }
-
-  // Act like nothing happened.
-  return retVal;
-};
-
-// Default configuration options; designed to be overriden.
-LayoutManager.prototype.options = {
-  // Layout and template properties can be assigned here to prefix
-  // template/layout names.
-  paths: {},
-
-  // Can be used to supply a different deferred implementation.
-  deferred: function() {
-    return $.Deferred();
-  },
-
-  // Fetch is passed a path and is expected to return template contents as a
-  // function or string.
-  fetch: function(path) {
-    return _.template($(path).html());
-  },
-
-  // This is really the only way you will want to partially apply a view into
-  // a layout.  Its entirely possible you'll want to do it differently, so
-  // this method is available to change.
-  partial: function(root, name, el, append) {
-    // If no selector is specified, assume the parent should be added to.
-    var $root = name ? $(root).find(name) : $(root);
-
-    // If no root found, return false.
-    if (!$root.length) {
-      return false;
-    }
-
-    // Use the append method if append argument is true.
-    this[append ? "append" : "html"]($root, el);
-
-    // If successfully added, return true.
-    return true;
-  },
-
-  // Override this with a custom HTML method, passed a root element and an
-  // element to replace the innerHTML with.
-  html: function(root, el) {
-    $(root).html(el);
-  },
-
-  // Very similar to HTML except this one will appendChild.
-  append: function(root, el) {
-    $(root).append(el);
-  },
-
-  // Return a deferred for when all promises resolve/reject.
-  when: function(promises) {
-    return $.when.apply(null, promises);
-  },
-
-  // By default, render using underscore's templating.
-  render: function(template, context) {
-    return template(context);
-  }
-};
-
-// Maintain a list of the keys at define time.
-keys = _.keys(LayoutManager.prototype.options);
-
-})(this);
-
-define("plugins/backbone.layoutmanager", function(){});
-
-/*!
- * jQuery Cookie Plugin v1.3
- * https://github.com/carhartl/jquery-cookie
- *
- * Copyright 2011, Klaus Hartl
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://www.opensource.org/licenses/mit-license.php
- * http://www.opensource.org/licenses/GPL-2.0
- */
-(function ($, document, undefined) {
-
-	var pluses = /\+/g;
-
-	function raw(s) {
-		return s;
-	}
-
-	function decoded(s) {
-		return decodeURIComponent(s.replace(pluses, ' '));
-	}
-
-	var config = $.cookie = function (key, value, options) {
-
-		// write
-		if (value !== undefined) {
-			options = $.extend({}, config.defaults, options);
-
-			if (value === null) {
-				options.expires = -1;
-			}
-
-			if (typeof options.expires === 'number') {
-				var days = options.expires, t = options.expires = new Date();
-				t.setDate(t.getDate() + days);
-			}
-
-			value = config.json ? JSON.stringify(value) : String(value);
-
-			return (document.cookie = [
-				encodeURIComponent(key), '=', config.raw ? value : encodeURIComponent(value),
-				options.expires ? '; expires=' + options.expires.toUTCString() : '', // use expires attribute, max-age is not supported by IE
-				options.path    ? '; path=' + options.path : '',
-				options.domain  ? '; domain=' + options.domain : '',
-				options.secure  ? '; secure' : ''
-			].join(''));
-		}
-
-		// read
-		var decode = config.raw ? raw : decoded;
-		var cookies = document.cookie.split('; ');
-		for (var i = 0, l = cookies.length; i < l; i++) {
-			var parts = cookies[i].split('=');
-			if (decode(parts.shift()) === key) {
-				var cookie = decode(parts.join('='));
-				return config.json ? JSON.parse(cookie) : cookie;
-			}
-		}
-
-		return null;
-	};
-
-	config.defaults = {};
-
-	$.removeCookie = function (key, options) {
-		if ($.cookie(key) !== null) {
-			$.cookie(key, null, options);
-			return true;
-		}
-		return false;
-	};
-
-})(jQuery, document);
-define("plugins/jquery.cookie", function(){});
-
-/*
- *
- * jqTransform
- * by mathieu vilaplana mvilaplana@dfc-e.com
- * Designer ghyslain armand garmand@dfc-e.com
- *
- *
- * Version 1.0 25.09.08
- * Version 1.1 06.08.09
- * Add event click on Checkbox and Radio
- * Auto calculate the size of a select element
- * Can now, disabled the elements
- * Correct bug in ff if click on select (overflow=hidden)
- * No need any more preloading !!
- * 
- ******************************************** */
- 
-(function($){
-	var defaultOptions = {preloadImg:true};
-	var jqTransformImgPreloaded = false;
-
-	var jqTransformPreloadHoverFocusImg = function(strImgUrl) {
-		//guillemets to remove for ie
-		strImgUrl = strImgUrl.replace(/^url\((.*)\)/,'$1').replace(/^\"(.*)\"$/,'$1');
-		var imgHover = new Image();
-		imgHover.src = strImgUrl.replace(/\.([a-zA-Z]*)$/,'-hover.$1');
-		var imgFocus = new Image();
-		imgFocus.src = strImgUrl.replace(/\.([a-zA-Z]*)$/,'-focus.$1');				
-	};
-
-	
-	/***************************
-	  Labels
-	***************************/
-	var jqTransformGetLabel = function(objfield){
-		var selfForm = $(objfield.get(0).form);
-		var oLabel = objfield.next();
-		if(!oLabel.is('label')) {
-			oLabel = objfield.prev();
-			if(oLabel.is('label')){
-				var inputname = objfield.attr('id');
-				if(inputname){
-					oLabel = selfForm.find('label[for="'+inputname+'"]');
-				} 
-			}
-		}
-		if(oLabel.is('label')){return oLabel.css('cursor','pointer');}
-		return false;
-	};
-	
-	/* Hide all open selects */
-	var jqTransformHideSelect = function(oTarget){
-		var ulVisible = $('.jqTransformSelectWrapper ul:visible');
-		ulVisible.each(function(){
-			var oSelect = $(this).parents(".jqTransformSelectWrapper:first").find("select").get(0);
-			//do not hide if click on the label object associated to the select
-			if( !(oTarget && oSelect.oLabel && oSelect.oLabel.get(0) == oTarget.get(0)) ){$(this).hide();}
-		});
-	};
-	/* Check for an external click */
-	var jqTransformCheckExternalClick = function(event) {
-		if ($(event.target).parents('.jqTransformSelectWrapper').length === 0) { jqTransformHideSelect($(event.target)); }
-	};
-
-	/* Apply document listener */
-	var jqTransformAddDocumentListener = function (){
-		$(document).mousedown(jqTransformCheckExternalClick);
-	};	
-			
-	/* Add a new handler for the reset action */
-	var jqTransformReset = function(f){
-		var sel;
-		$('.jqTransformSelectWrapper select', f).each(function(){sel = (this.selectedIndex<0) ? 0 : this.selectedIndex; $('ul', $(this).parent()).each(function(){$('a:eq('+ sel +')', this).click();});});
-		$('a.jqTransformCheckbox, a.jqTransformRadio', f).removeClass('jqTransformChecked');
-		$('input:checkbox, input:radio', f).each(function(){if(this.checked){$('a', $(this).parent()).addClass('jqTransformChecked');}});
-	};
-
-	/***************************
-	  Buttons
-	 ***************************/
-	$.fn.jqTransInputButton = function(){
-		return this.each(function(){
-			var newBtn = $('<button id="'+ this.id +'" name="'+ this.name +'" type="'+ this.type +'" class="'+ this.className +' jqTransformButton"><span><span>'+ $(this).attr('value') +'</span></span>')
-				.hover(function(){newBtn.addClass('jqTransformButton_hover');},function(){newBtn.removeClass('jqTransformButton_hover')})
-				.mousedown(function(){newBtn.addClass('jqTransformButton_click')})
-				.mouseup(function(){newBtn.removeClass('jqTransformButton_click')})
-			;
-			$(this).replaceWith(newBtn);
-		});
-	};
-	
-	/***************************
-	  Text Fields 
-	 ***************************/
-	$.fn.jqTransInputText = function(){
-		return this.each(function(){
-			var $input = $(this);
-	
-			if($input.hasClass('jqtranformdone') || !$input.is('input')) {return;}
-			$input.addClass('jqtranformdone');
-	
-			var oLabel = jqTransformGetLabel($(this));
-			oLabel && oLabel.bind('click',function(){$input.focus();});
-	
-			var inputSize=$input.width();
-			if($input.attr('size')){
-				inputSize = $input.attr('size')*10;
-				$input.css('width',inputSize);
-			}
-			
-			$input.addClass("jqTransformInput").wrap('<div class="jqTransformInputWrapper"><div class="jqTransformInputInner"><div></div></div></div>');
-			var $wrapper = $input.parent().parent().parent();
-			$wrapper.css("width", inputSize+10);
-			$input
-				.focus(function(){$wrapper.addClass("jqTransformInputWrapper_focus");})
-				.blur(function(){$wrapper.removeClass("jqTransformInputWrapper_focus");})
-				.hover(function(){$wrapper.addClass("jqTransformInputWrapper_hover");},function(){$wrapper.removeClass("jqTransformInputWrapper_hover");})
-			;
-	
-			/* If this is safari we need to add an extra class */
-			$.browser.safari && $wrapper.addClass('jqTransformSafari');
-			$.browser.safari && $input.css('width',$wrapper.width()+16);
-			this.wrapper = $wrapper;
-			
-		});
-	};
-	
-	/***************************
-	  Check Boxes 
-	 ***************************/	
-	$.fn.jqTransCheckBox = function(){
-		return this.each(function(){
-			if($(this).hasClass('jqTransformHidden')) {return;}
-
-			var $input = $(this);
-			var inputSelf = this;
-
-			//set the click on the label
-			var oLabel=jqTransformGetLabel($input);
-			oLabel && oLabel.click(function(){aLink.trigger('click');});
-			
-			var aLink = $('<a href="#" class="jqTransformCheckbox"></a>');
-			//wrap and add the link
-			$input.addClass('jqTransformHidden').wrap('<span class="jqTransformCheckboxWrapper"></span>').parent().prepend(aLink);
-			//on change, change the class of the link
-			$input.change(function(){
-				this.checked && aLink.addClass('jqTransformChecked') || aLink.removeClass('jqTransformChecked');
-				return true;
-			});
-			// Click Handler, trigger the click and change event on the input
-			aLink.click(function(){
-				//do nothing if the original input is disabled
-				if($input.attr('disabled')){return false;}
-				//trigger the envents on the input object
-				$input.trigger('click').trigger("change");	
-				return false;
-			});
-
-			// set the default state
-			this.checked && aLink.addClass('jqTransformChecked');		
-		});
-	};
-	/***************************
-	  Radio Buttons 
-	 ***************************/	
-	$.fn.jqTransRadio = function(){
-		return this.each(function(){
-			if($(this).hasClass('jqTransformHidden')) {return;}
-
-			var $input = $(this);
-			var inputSelf = this;
-				
-			oLabel = jqTransformGetLabel($input);
-			oLabel && oLabel.click(function(){aLink.trigger('click');});
-	
-			var aLink = $('<a href="#" class="jqTransformRadio" rel="'+ this.name +'"></a>');
-			$input.addClass('jqTransformHidden').wrap('<span class="jqTransformRadioWrapper"></span>').parent().prepend(aLink);
-			
-			$input.change(function(){
-				inputSelf.checked && aLink.addClass('jqTransformChecked') || aLink.removeClass('jqTransformChecked');
-				return true;
-			});
-			// Click Handler
-			aLink.click(function(){
-				if($input.attr('disabled')){return false;}
-				$input.trigger('click').trigger('change');
-	
-				// uncheck all others of same name input radio elements
-				$('input[name="'+$input.attr('name')+'"]',inputSelf.form).not($input).each(function(){
-					$(this).attr('type')=='radio' && $(this).trigger('change');
-				});
-	
-				return false;					
-			});
-			// set the default state
-			inputSelf.checked && aLink.addClass('jqTransformChecked');
-		});
-	};
-	
-	/***************************
-	  TextArea 
-	 ***************************/	
-	$.fn.jqTransTextarea = function(){
-		return this.each(function(){
-			var textarea = $(this);
-	
-			if(textarea.hasClass('jqtransformdone')) {return;}
-			textarea.addClass('jqtransformdone');
-	
-			oLabel = jqTransformGetLabel(textarea);
-			oLabel && oLabel.click(function(){textarea.focus();});
-			
-			var strTable = '<table cellspacing="0" cellpadding="0" border="0" class="jqTransformTextarea">';
-			strTable +='<tr><td id="jqTransformTextarea-tl"></td><td id="jqTransformTextarea-tm"></td><td id="jqTransformTextarea-tr"></td></tr>';
-			strTable +='<tr><td id="jqTransformTextarea-ml">&nbsp;</td><td id="jqTransformTextarea-mm"><div></div></td><td id="jqTransformTextarea-mr">&nbsp;</td></tr>';	
-			strTable +='<tr><td id="jqTransformTextarea-bl"></td><td id="jqTransformTextarea-bm"></td><td id="jqTransformTextarea-br"></td></tr>';
-			strTable +='</table>';					
-			var oTable = $(strTable)
-					.insertAfter(textarea)
-					.hover(function(){
-						!oTable.hasClass('jqTransformTextarea-focus') && oTable.addClass('jqTransformTextarea-hover');
-					},function(){
-						oTable.removeClass('jqTransformTextarea-hover');					
-					})
-				;
-				
-			textarea
-				.focus(function(){oTable.removeClass('jqTransformTextarea-hover').addClass('jqTransformTextarea-focus');})
-				.blur(function(){oTable.removeClass('jqTransformTextarea-focus');})
-				.appendTo($('#jqTransformTextarea-mm div',oTable))
-			;
-			this.oTable = oTable;
-			if($.browser.safari){
-				$('#jqTransformTextarea-mm',oTable)
-					.addClass('jqTransformSafariTextarea')
-					.find('div')
-						.css('height',textarea.height())
-						.css('width',textarea.width())
-				;
-			}
-		});
-	};
-	
-	/***************************
-	  Select 
-	 ***************************/	
-	$.fn.jqTransSelect = function(){
-		return this.each(function(index){
-			var $select = $(this);
-
-			if($select.hasClass('jqTransformHidden')) {return;}
-			if($select.attr('multiple')) {return;}
-
-			var oLabel  =  jqTransformGetLabel($select);
-			/* First thing we do is Wrap it */
-			var $wrapper = $select
-				.addClass('jqTransformHidden')
-				.wrap('<div class="jqTransformSelectWrapper"></div>')
-				.parent()
-				.css({zIndex: 10-index})
-			;
-			
-			/* Now add the html for the select */
-			$wrapper.prepend('<div><span></span><a href="#" class="jqTransformSelectOpen"></a></div><ul></ul>');
-			var $ul = $('ul', $wrapper).css('width',$select.width()).hide();
-			/* Now we add the options */
-			$('option', this).each(function(i){
-				var oLi = $('<li><a href="#" index="'+ i +'">'+ $(this).html() +'</a></li>');
-				$ul.append(oLi);
-			});
-			
-			/* Add click handler to the a */
-			$ul.find('a').click(function(){
-					$('a.selected', $wrapper).removeClass('selected');
-					$(this).addClass('selected');	
-					/* Fire the onchange event */
-					if ($select[0].selectedIndex != $(this).attr('index') && $select[0].onchange) { $select[0].selectedIndex = $(this).attr('index'); $select[0].onchange(); }
-					$select[0].selectedIndex = $(this).attr('index');
-					$('span:eq(0)', $wrapper).html($(this).html());
-					$ul.hide();
-					return false;
-			});
-			/* Set the default */
-			$('a:eq('+ this.selectedIndex +')', $ul).click();
-			$('span:first', $wrapper).click(function(){$("a.jqTransformSelectOpen",$wrapper).trigger('click');});
-			oLabel && oLabel.click(function(){$("a.jqTransformSelectOpen",$wrapper).trigger('click');});
-			this.oLabel = oLabel;
-			
-			/* Apply the click handler to the Open */
-			var oLinkOpen = $('a.jqTransformSelectOpen', $wrapper)
-				.click(function(){
-					//Check if box is already open to still allow toggle, but close all other selects
-					if( $ul.css('display') == 'none' ) {jqTransformHideSelect();} 
-					if($select.attr('disabled')){return false;}
-
-					$ul.slideToggle('fast', function(){					
-						var offSet = ($('a.selected', $ul).offset().top - $ul.offset().top);
-						$ul.animate({scrollTop: offSet});
-					});
-					return false;
-				})
-			;
-
-			// Set the new width
-			var iSelectWidth = $select.outerWidth();
-			var oSpan = $('span:first',$wrapper);
-			var newWidth = (iSelectWidth > oSpan.innerWidth())?iSelectWidth+oLinkOpen.outerWidth():$wrapper.width();
-			$wrapper.css('width',newWidth);
-			$ul.css('width',newWidth*3);
-			oSpan.css({width:iSelectWidth});
-		
-			// Calculate the height if necessary, less elements that the default height
-			//show the ul to calculate the block, if ul is not displayed li height value is 0
-			$ul.css({display:'block',visibility:'hidden'});
-			var iSelectHeight = ($('li',$ul).length)*($('li:first',$ul).height());//+1 else bug ff
-			(iSelectHeight < $ul.height()) && $ul.css({height:iSelectHeight,'overflow':'hidden'});//hidden else bug with ff
-			$ul.css({display:'none',visibility:'visible'});
-			
-		});
-	};
-	$.fn.jqTransform = function(options){
-		var opt = $.extend({},defaultOptions,options);
-		
-		/* each form */
-		 return this.each(function(){
-			var selfForm = $(this);
-			if(selfForm.hasClass('jqtransformdone')) {return;}
-			selfForm.addClass('jqtransformdone');
-			
-			$('input:submit, input:reset, input[type="button"]', this).jqTransInputButton();			
-			$('input:text, input:password', this).jqTransInputText();			
-			$('input:checkbox', this).jqTransCheckBox();
-			$('input:radio', this).jqTransRadio();
-			$('textarea', this).jqTransTextarea();
-			
-			if( $('select', this).jqTransSelect().length > 0 ){jqTransformAddDocumentListener();}
-			selfForm.bind('reset',function(){var action = function(){jqTransformReset(this);}; window.setTimeout(action, 10);});
-			
-			//preloading dont needed anymore since normal, focus and hover image are the same one
-			/*if(opt.preloadImg && !jqTransformImgPreloaded){
-				jqTransformImgPreloaded = true;
-				var oInputText = $('input:text:first', selfForm);
-				if(oInputText.length > 0){
-					//pour ie on eleve les ""
-					var strWrapperImgUrl = oInputText.get(0).wrapper.css('background-image');
-					jqTransformPreloadHoverFocusImg(strWrapperImgUrl);					
-					var strInnerImgUrl = $('div.jqTransformInputInner',$(oInputText.get(0).wrapper)).css('background-image');
-					jqTransformPreloadHoverFocusImg(strInnerImgUrl);
-				}
-				
-				var oTextarea = $('textarea',selfForm);
-				if(oTextarea.length > 0){
-					var oTable = oTextarea.get(0).oTable;
-					$('td',oTable).each(function(){
-						var strImgBack = $(this).css('background-image');
-						jqTransformPreloadHoverFocusImg(strImgBack);
-					});
-				}
-			}*/
-			
-			
-		}); /* End Form each */
-				
-	};/* End the Plugin */
-
-})(jQuery);
-				   
-define("plugins/jquery.jqtransform", function(){});
-
-// jQuery WipeTouch 1.2.0
-// ------------------------------------------------------------------------
-//
-// Developed and maintained by Igor Ramadas
-// http://aboutigor.com
-// http://devv.com
-//
-// USAGE
-// ------------------------------------------------------------------------
-//
-// $(selector).wipetouch(config);
-//
-// The wipe events should expect the result object with the following properties:
-// speed - the wipe speed from 1 to 5
-// x - how many pixels moved on the horizontal axis
-// y - how many pixels moved on the vertical axis
-// source - the element which triggered the wipe gesture
-//
-// EXAMPLE
-//		$(document).wipetouch({
-//			allowDiagonal: true,
-//			wipeLeft: function(result) { alert("Left on speed " + result.speed) },
-//			wipeTopLeft: function(result) { alert("Top left on speed " + result.speed) },
-//			wipeBottomLeft: function(result) { alert("Bottom left on speed " + result.speed) }
-//		});
-//
-//
-// More details at http://wipetouch.codeplex.com/
-//
-// CHANGE LOG
-// ------------------------------------------------------------------------
-// 1.2.0
-// - New: wipeMove event, triggered while moving the mouse/finger.
-// - New: added "source" to the result object.
-// - Bug fix: sometimes vertical wipe events would not trigger correctly.
-// - Bug fix: improved tapToClick handler.
-// - General code refactoring.
-// - Windows Phone 7 is not supported, yet! Its behaviour is completely broken and would require some special tricks to make it work. Maybe in the future...
-//
-// 1.1.0
-// - New: tapToClick, if true will identify taps and and trigger a click on the touched element. Default is false.
-// - Changed: events wipeBottom*** and wipeTop*** renamed to wipeDown*** and wipeUp***.
-// - Changed: better touch speed calculation (was always too fast before).
-// - Changed: speed will be an integer now (instead of float).
-// - Changed: better wipe detection (if Y movement is more than X, do a vertical wipe instead of horizontal).
-// - Bug fix: added preventDefault to touchStart and touchEnd internal events (this was missing).
-// - Other general tweaks to the code.
-//
-// The minified version of WipeTouch can be generated using Jasc: http://jasc.codeplex.com
-
-(function ($)
-{
-	$.fn.wipetouch = function (settings)
-	{
-		// ------------------------------------------------------------------------
-		// PLUGIN SETTINGS
-		// ------------------------------------------------------------------------
-
-		var config = {
-
-			// Variables and options
-			moveX: 40, 	// minimum amount of horizontal pixels to trigger a wipe event
-			moveY: 40, 	// minimum amount of vertical pixels to trigger a wipe event
-			tapToClick: false, // if user taps the screen it will fire a click event on the touched element
-			preventDefault: true, // if true, prevents default events (click for example)
-			allowDiagonal: false, // if false, will trigger horizontal and vertical movements so wipeUpLeft, wipeDownLeft, wipeUpRight, wipeDownRight are ignored
-
-			// Wipe events
-			wipeLeft: false, // called on wipe left gesture
-			wipeRight: false, // called on wipe right gesture
-			wipeUp: false, // called on wipe up gesture
-			wipeDown: false, // called on wipe down gesture
-			wipeUpLeft: false, // called on wipe top and left gesture
-			wipeDownLeft: false, // called on wipe bottom and left gesture
-			wipeUpRight: false, // called on wipe top and right gesture
-			wipeDownRight: false, // called on wipe bottom and right gesture
-			wipeMove: false, // triggered whenever touchMove acts
-
-			// DEPRECATED EVENTS
-			wipeTopLeft: false, // USE WIPEUPLEFT
-			wipeBottomLeft: false, // USE WIPEDOWNLEFT
-			wipeTopRight: false, // USE WIPEUPRIGHT
-			wipeBottomRight: false	// USE WIPEDOWNRIGHT
-		};
-
-		if (settings)
-		{
-			$.extend(config, settings);
-		}
-
-		this.each(function ()
-		{
-			// ------------------------------------------------------------------------
-			// INTERNAL VARIABLES
-			// ------------------------------------------------------------------------
-
-			var startX; 					// where touch has started, left
-			var startY; 					// where touch has started, top
-			var startDate = false; 			// used to calculate timing and aprox. acceleration
-			var curX; 						// keeps touch X position while moving on the screen
-			var curY; 						// keeps touch Y position while moving on the screen
-			var isMoving = false; 			// is user touching and moving?
-			var touchedElement = false; 	// element which user has touched
-
-			// These are for non-touch devices!
-			var useMouseEvents = false; 	// force using the mouse events to simulate touch
-			var clickEvent = false; 		// holds the click event of the target, when used hasn't clicked
-
-			// ------------------------------------------------------------------------
-			// TOUCH EVENTS
-			// ------------------------------------------------------------------------
-
-			// Called when user touches the screen.
-			function onTouchStart(e)
-			{
-				var start = useMouseEvents || (e.originalEvent.touches && e.originalEvent.touches.length > 0);
-
-				if (!isMoving && start)
-				{
-					if (config.preventDefault)
-					{
-						e.preventDefault();
-					}
-
-					// Temporary fix for deprecated events, these will be removed on next version!
-					if (config.allowDiagonal)
-					{
-						if (!config.wipeDownLeft)
-						{
-							config.wipeDownLeft = config.wipeBottomLeft;
-						}
-
-						if (!config.wipeDownRight)
-						{
-							config.wipeDownRight = config.wipeBottomRight;
-						}
-
-						if (!config.wipeUpLeft)
-						{
-							config.wipeUpLeft = config.wipeTopLeft;
-						}
-
-						if (!config.wipeUpRight)
-						{
-							config.wipeUpRight = config.wipeTopRight;
-						}
-					}
-
-					// When touch events are not present, use mouse events.
-					if (useMouseEvents)
-					{
-						startX = e.pageX;
-						startY = e.pageY;
-
-						$(this).bind("mousemove", onTouchMove);
-						$(this).one("mouseup", onTouchEnd);
-					}
-					else
-					{
-						startX = e.originalEvent.touches[0].pageX;
-						startY = e.originalEvent.touches[0].pageY;
-
-						$(this).bind("touchmove", onTouchMove);
-					}
-
-					// Set the start date and current X/Y.
-					startDate = new Date().getTime();
-					curX = startX;
-					curY = startY;
-					isMoving = true;
-
-					touchedElement = $(e.target);
-				}
-			}
-
-			// Called when user untouches the screen.
-			function onTouchEnd(e)
-			{
-				if (config.preventDefault)
-				{
-					e.preventDefault();
-				}
-
-				// When touch events are not present, use mouse events.
-				if (useMouseEvents)
-				{
-					$(this).unbind("mousemove", onTouchMove);
-				}
-				else
-				{
-					$(this).unbind("touchmove", onTouchMove);
-				}
-
-				// If is moving then calculate the touch results, otherwise reset it.
-				if (isMoving)
-				{
-					touchCalculate(e);
-				}
-				else
-				{
-					resetTouch();
-				}
-			}
-
-			// Called when user is touching and moving on the screen.
-			function onTouchMove(e)
-			{
-				if (config.preventDefault)
-				{
-					e.preventDefault();
-				}
-
-				if (useMouseEvents && !isMoving)
-				{
-					onTouchStart(e);
-				}
-
-				if (isMoving)
-				{
-					if (useMouseEvents)
-					{
-						curX = e.pageX;
-						curY = e.pageY;
-					}
-					else
-					{
-						curX = e.originalEvent.touches[0].pageX;
-						curY = e.originalEvent.touches[0].pageY;
-					}
-
-					// If there's a wipeMove event, call it passing
-					// current X and Y position (curX and curY).
-					if (config.wipeMove)
-					{
-						triggerEvent(config.wipeMove, {
-							curX: curX,
-							curY: curY
-						});
-					}
-				}
-			}
-
-			// ------------------------------------------------------------------------
-			// CALCULATE TOUCH AND TRIGGER
-			// ------------------------------------------------------------------------
-
-			function touchCalculate(e)
-			{
-				var endDate = new Date().getTime(); 	// current date to calculate timing
-				var ms = startDate - endDate; 			// duration of touch in milliseconds
-
-				var x = curX; 							// current left position
-				var y = curY; 							// current top position
-				var dx = x - startX; 					// diff of current left to starting left
-				var dy = y - startY; 					// diff of current top to starting top
-				var ax = Math.abs(dx); 					// amount of horizontal movement
-				var ay = Math.abs(dy); 					// amount of vertical movement
-
-				// If moved less than 15 pixels, touch duration is less than 100ms,
-				// and tapToClick is true then trigger a click event and stop processing.
-				if (ax < 15 && ay < 15 && ms < 100)
-				{
-					clickEvent = false;
-
-					if (config.preventDefault)
-					{
-						resetTouch();
-
-						touchedElement.trigger("click");
-						return;
-					}
-				}
-				// When touch events are not present, use mouse events.
-				else if (useMouseEvents)
-				{
-					var evts = touchedElement.data("events");
-
-					if (evts)
-					{
-						// Save click event to the temp clickEvent variable.
-						var clicks = evts.click;
-
-						if (clicks && clicks.length > 0)
-						{
-							$.each(clicks, function (i, f)
-							{
-								clickEvent = f;
-								return;
-							});
-
-							touchedElement.unbind("click");
-						}
-					}
-				}
-
-				// Is it moving to the right or left, top or bottom?
-				var toright = dx > 0;
-				var tobottom = dy > 0;
-
-				// Calculate speed from 1 to 5, 1 being slower and 5 faster.
-				var s = ((ax + ay) * 60) / ((ms) / 6 * (ms));
-
-				if (s < 1) s = 1;
-				if (s > 5) s = 5;
-
-				var result = {
-					speed: parseInt(s),
-					x: ax,
-					y: ay,
-					source: touchedElement
-				};
-
-				if (ax >= config.moveX)
-				{
-					// Check if it's allowed and trigger diagonal wipe events.
-					if (config.allowDiagonal && ay >= config.moveY)
-					{
-						if (toright && tobottom)
-						{
-							triggerEvent(config.wipeDownRight, result);
-						}
-						else if (toright && !tobottom)
-						{
-							triggerEvent(config.wipeUpRight, result);
-						}
-						else if (!toright && tobottom)
-						{
-							triggerEvent(config.wipeDownLeft, result);
-						}
-						else
-						{
-							triggerEvent(config.wipeUpLeft, result);
-						}
-					}
-					// Otherwise trigger horizontal events if X > Y.
-					else if (ax >= ay)
-					{
-						if (toright)
-						{
-							triggerEvent(config.wipeRight, result);
-						}
-						else
-						{
-							triggerEvent(config.wipeLeft, result);
-						}
-					}
-				}
-				// If Y > X and no diagonal, trigger vertical events.
-				else if (ay >= config.moveY && ay > ax)
-				{
-					if (tobottom)
-					{
-						triggerEvent(config.wipeDown, result);
-					}
-					else
-					{
-						triggerEvent(config.wipeUp, result);
-					}
-				}
-
-				resetTouch();
-			}
-
-			// Resets the cached variables.
-			function resetTouch()
-			{
-				startX = false;
-				startY = false;
-				startDate = false;
-				isMoving = false;
-
-				// If there's a click event, bind after a few miliseconds.
-				if (clickEvent)
-				{
-					window.setTimeout(function ()
-					{
-						touchedElement.bind("click", clickEvent);
-						clickEvent = false;
-					}, 50);
-				}
-			}
-
-			// Trigger a wipe event passing a result object with
-			// speed from 1 to 5, x / y movement amount in pixels,
-			// and the source element.
-			function triggerEvent(wipeEvent, result)
-			{
-				if (wipeEvent)
-				{
-					wipeEvent(result);
-				}
-			}
-
-			// ------------------------------------------------------------------------
-			// ADD TOUCHSTART AND TOUCHEND EVENT LISTENERS
-			// ------------------------------------------------------------------------
-
-			if ("ontouchstart" in document.documentElement)
-			{
-				$(this).bind("touchstart", onTouchStart);
-				$(this).bind("touchend", onTouchEnd);
-			}
-			else
-			{
-				useMouseEvents = true;
-
-				$(this).bind("mousedown", onTouchStart);
-				$(this).bind("mouseout", onTouchEnd);
-			}
-		});
-
-		return this;
-	};
-})(jQuery);
-define("plugins/jquery.wipetouch", function(){});
-
-define('app',[
-		// Libraries.
-		"JSON", "jquery", "lodash", "backbone", "handlebars",
-
-		// Plugins.
-		"plugins/backbone.layoutmanager", "plugins/jquery.cookie", "plugins/jquery.jqtransform", "plugins/jquery.wipetouch"
-	],
-
-	function(JSON, $, _, Backbone, Handlebars) {
-
-		// Provide a global location to place configuration settings and module
-		// creation.
-		var app = {
-			// The root path to run the application.
-			root: "/"
-		};
-
-		// Localize or create a new JavaScript Template object.
-		var JST = window.JST = window.JST || {};
-
-		// Configure LayoutManager with Backbone Boilerplate defaults.
-		Backbone.LayoutManager.configure({
-			// Allow LayoutManager to augment Backbone.View.prototype.
-			manage: true,
-
-			paths: {
-				layout: "app/templates/layout/",
-				template: "app/templates/"
-			},
-
-			fetch: function(path) {
-				var done;
-
-				// Add the html extension.
-				path = path + ".html";
-
-				// If the template has not been loaded yet, then load.
-				if (!JST[path]) {
-					done = this.async();
-					return $.ajax({
-						url: app.root + path
-					}).then(function(contents) {
-						JST[path] = Handlebars.compile(contents);
-						JST[path].__compiled__ = true;
-
-						done(JST[path]);
-					});
-				}
-
-				// If the template hasn't been compiled yet, then compile.
-				if (!JST[path].__compiled__) {
-					JST[path] = Handlebars.template(JST[path]);
-					JST[path].__compiled__ = true;
-				}
-
-				return JST[path];
-			}
-		});
-
-		// Mix Backbone.Events, modules, and layout management into the app object.
-		return _.extend(app, {
-			// Create a custom object with a nested Views object.
-			module: function(additionalProps) {
-				return _.extend({
-					Views: {}
-				}, additionalProps);
-			},
-
-			// Helper for using layouts.
-			useLayout: function(name, options) {
-				// If already using this Layout, then don't re-inject into the DOM.
-				if (this.layout && this.layout.options.template === name) {
-					return this.layout;
-				}
-
-				// If a layout already exists, remove it from the DOM.
-				if (this.layout) {
-					this.layout.remove();
-				}
-
-				// Create a new Layout with options.
-				var layout = new Backbone.Layout(_.extend({
-					template: name,
-					className: "layout " + name,
-					id: "layout"
-				}, options));
-
-				// Insert into the DOM.
-				$("#main").empty().append(layout.el);
-
-				// Render the layout.
-				layout.render();
-
-				// Cache the refererence.
-				this.layout = layout;
-
-				// Return the reference, for chainability.
-				return layout;
-			}
-		}, Backbone.Events);
-
-	});
-/*jshint undef : true*/
-/*globals define:true , window: true*/
-define('modules/core/logger',["app"],
-
-function(app) {
-	
-
-	var Logger = {
-		ENABLEALL: true,
-		log: function(topic,content) {
-
-			if(window.console && ( !! Logger.ENABLEALL || ( !! topic && !! Logger.enable && Logger.enable[topic]))) {
-
-				window.console.log(content);
-
-
-			}
-		}
-	};
-
-	if(window.console) {
-		Logger.error = window.console.error;
-	} else {
-		Logger.error = function(){};
-	}
-	return Logger;
-});
-/*!
- * AmplifyJS 1.1.0 - Core, Store, Request
- * 
- * Copyright 2011 appendTo LLC. (http://appendto.com/team)
- * Dual licensed under the MIT or GPL licenses.
- * http://appendto.com/open-source-licenses
- * 
- * http://amplifyjs.com
- */
-/*!
- * Amplify Core 1.1.0
- * 
- * Copyright 2011 appendTo LLC. (http://appendto.com/team)
- * Dual licensed under the MIT or GPL licenses.
- * http://appendto.com/open-source-licenses
- * 
- * http://amplifyjs.com
- */
-(function( global, undefined ) {
-
-var slice = [].slice,
-	subscriptions = {};
-
-var amplify = global.amplify = {
-	publish: function( topic ) {
-		var args = slice.call( arguments, 1 ),
-			topicSubscriptions,
-			subscription,
-			length,
-			i = 0,
-			ret;
-
-		if ( !subscriptions[ topic ] ) {
-			return true;
-		}
-
-		topicSubscriptions = subscriptions[ topic ].slice();
-		for ( length = topicSubscriptions.length; i < length; i++ ) {
-			subscription = topicSubscriptions[ i ];
-			ret = subscription.callback.apply( subscription.context, args );
-			if ( ret === false ) {
-				break;
-			}
-		}
-		return ret !== false;
-	},
-
-	subscribe: function( topic, context, callback, priority ) {
-		if ( arguments.length === 3 && typeof callback === "number" ) {
-			priority = callback;
-			callback = context;
-			context = null;
-		}
-		if ( arguments.length === 2 ) {
-			callback = context;
-			context = null;
-		}
-		priority = priority || 10;
-
-		var topicIndex = 0,
-			topics = topic.split( /\s/ ),
-			topicLength = topics.length,
-			added;
-		for ( ; topicIndex < topicLength; topicIndex++ ) {
-			topic = topics[ topicIndex ];
-			added = false;
-			if ( !subscriptions[ topic ] ) {
-				subscriptions[ topic ] = [];
-			}
-	
-			var i = subscriptions[ topic ].length - 1,
-				subscriptionInfo = {
-					callback: callback,
-					context: context,
-					priority: priority
-				};
-	
-			for ( ; i >= 0; i-- ) {
-				if ( subscriptions[ topic ][ i ].priority <= priority ) {
-					subscriptions[ topic ].splice( i + 1, 0, subscriptionInfo );
-					added = true;
-					break;
-				}
-			}
-
-			if ( !added ) {
-				subscriptions[ topic ].unshift( subscriptionInfo );
-			}
-		}
-
-		return callback;
-	},
-
-	unsubscribe: function( topic, callback ) {
-		if ( !subscriptions[ topic ] ) {
-			return;
-		}
-
-		var length = subscriptions[ topic ].length,
-			i = 0;
-
-		for ( ; i < length; i++ ) {
-			if ( subscriptions[ topic ][ i ].callback === callback ) {
-				subscriptions[ topic ].splice( i, 1 );
-				break;
-			}
-		}
-	}
-};
-
-}( this ) );
-/*!
- * Amplify Store - Persistent Client-Side Storage 1.1.0
- * 
- * Copyright 2011 appendTo LLC. (http://appendto.com/team)
- * Dual licensed under the MIT or GPL licenses.
- * http://appendto.com/open-source-licenses
- * 
- * http://amplifyjs.com
- */
-(function( amplify, undefined ) {
-
-var store = amplify.store = function( key, value, options, type ) {
-	var type = store.type;
-	if ( options && options.type && options.type in store.types ) {
-		type = options.type;
-	}
-	return store.types[ type ]( key, value, options || {} );
-};
-
-store.types = {};
-store.type = null;
-store.addType = function( type, storage ) {
-	if ( !store.type ) {
-		store.type = type;
-	}
-
-	store.types[ type ] = storage;
-	store[ type ] = function( key, value, options ) {
-		options = options || {};
-		options.type = type;
-		return store( key, value, options );
-	};
-}
-store.error = function() {
-	return "amplify.store quota exceeded"; 
-};
-
-var rprefix = /^__amplify__/;
-function createFromStorageInterface( storageType, storage ) {
-	store.addType( storageType, function( key, value, options ) {
-		var storedValue, parsed, i, remove,
-			ret = value,
-			now = (new Date()).getTime();
-
-		if ( !key ) {
-			ret = {};
-			remove = [];
-			i = 0;
-			try {
-				// accessing the length property works around a localStorage bug
-				// in Firefox 4.0 where the keys don't update cross-page
-				// we assign to key just to avoid Closure Compiler from removing
-				// the access as "useless code"
-				// https://bugzilla.mozilla.org/show_bug.cgi?id=662511
-				key = storage.length;
-
-				while ( key = storage.key( i++ ) ) {
-					if ( rprefix.test( key ) ) {
-						parsed = JSON.parse( storage.getItem( key ) );
-						if ( parsed.expires && parsed.expires <= now ) {
-							remove.push( key );
-						} else {
-							ret[ key.replace( rprefix, "" ) ] = parsed.data;
-						}
-					}
-				}
-				while ( key = remove.pop() ) {
-					storage.removeItem( key );
-				}
-			} catch ( error ) {}
-			return ret;
-		}
-
-		// protect against name collisions with direct storage
-		key = "__amplify__" + key;
-
-		if ( value === undefined ) {
-			storedValue = storage.getItem( key );
-			parsed = storedValue ? JSON.parse( storedValue ) : { expires: -1 };
-			if ( parsed.expires && parsed.expires <= now ) {
-				storage.removeItem( key );
-			} else {
-				return parsed.data;
-			}
-		} else {
-			if ( value === null ) {
-				storage.removeItem( key );
-			} else {
-				parsed = JSON.stringify({
-					data: value,
-					expires: options.expires ? now + options.expires : null
-				});
-				try {
-					storage.setItem( key, parsed );
-				// quota exceeded
-				} catch( error ) {
-					// expire old data and try again
-					store[ storageType ]();
-					try {
-						storage.setItem( key, parsed );
-					} catch( error ) {
-						throw store.error();
-					}
-				}
-			}
-		}
-
-		return ret;
-	});
-}
-
-// localStorage + sessionStorage
-// IE 8+, Firefox 3.5+, Safari 4+, Chrome 4+, Opera 10.5+, iPhone 2+, Android 2+
-for ( var webStorageType in { localStorage: 1, sessionStorage: 1 } ) {
-	// try/catch for file protocol in Firefox
-	try {
-		if ( window[ webStorageType ].getItem ) {
-			createFromStorageInterface( webStorageType, window[ webStorageType ] );
-		}
-	} catch( e ) {}
-}
-
-// globalStorage
-// non-standard: Firefox 2+
-// https://developer.mozilla.org/en/dom/storage#globalStorage
-if ( window.globalStorage ) {
-	// try/catch for file protocol in Firefox
-	try {
-		createFromStorageInterface( "globalStorage",
-			window.globalStorage[ window.location.hostname ] );
-		// Firefox 2.0 and 3.0 have sessionStorage and globalStorage
-		// make sure we default to globalStorage
-		// but don't default to globalStorage in 3.5+ which also has localStorage
-		if ( store.type === "sessionStorage" ) {
-			store.type = "globalStorage";
-		}
-	} catch( e ) {}
-}
-
-// userData
-// non-standard: IE 5+
-// http://msdn.microsoft.com/en-us/library/ms531424(v=vs.85).aspx
-(function() {
-	// IE 9 has quirks in userData that are a huge pain
-	// rather than finding a way to detect these quirks
-	// we just don't register userData if we have localStorage
-	if ( store.types.localStorage ) {
-		return;
-	}
-
-	// append to html instead of body so we can do this from the head
-	var div = document.createElement( "div" ),
-		attrKey = "amplify";
-	div.style.display = "none";
-	document.getElementsByTagName( "head" )[ 0 ].appendChild( div );
-
-	// we can't feature detect userData support
-	// so just try and see if it fails
-	// surprisingly, even just adding the behavior isn't enough for a failure
-	// so we need to load the data as well
-	try {
-		div.addBehavior( "#default#userdata" );
-		div.load( attrKey );
-	} catch( e ) {
-		div.parentNode.removeChild( div );
-		return;
-	}
-
-	store.addType( "userData", function( key, value, options ) {
-		div.load( attrKey );
-		var attr, parsed, prevValue, i, remove,
-			ret = value,
-			now = (new Date()).getTime();
-
-		if ( !key ) {
-			ret = {};
-			remove = [];
-			i = 0;
-			while ( attr = div.XMLDocument.documentElement.attributes[ i++ ] ) {
-				parsed = JSON.parse( attr.value );
-				if ( parsed.expires && parsed.expires <= now ) {
-					remove.push( attr.name );
-				} else {
-					ret[ attr.name ] = parsed.data;
-				}
-			}
-			while ( key = remove.pop() ) {
-				div.removeAttribute( key );
-			}
-			div.save( attrKey );
-			return ret;
-		}
-
-		// convert invalid characters to dashes
-		// http://www.w3.org/TR/REC-xml/#NT-Name
-		// simplified to assume the starting character is valid
-		// also removed colon as it is invalid in HTML attribute names
-		key = key.replace( /[^-._0-9A-Za-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u37f-\u1fff\u200c-\u200d\u203f\u2040\u2070-\u218f]/g, "-" );
-
-		if ( value === undefined ) {
-			attr = div.getAttribute( key );
-			parsed = attr ? JSON.parse( attr ) : { expires: -1 };
-			if ( parsed.expires && parsed.expires <= now ) {
-				div.removeAttribute( key );
-			} else {
-				return parsed.data;
-			}
-		} else {
-			if ( value === null ) {
-				div.removeAttribute( key );
-			} else {
-				// we need to get the previous value in case we need to rollback
-				prevValue = div.getAttribute( key );
-				parsed = JSON.stringify({
-					data: value,
-					expires: (options.expires ? (now + options.expires) : null)
-				});
-				div.setAttribute( key, parsed );
-			}
-		}
-
-		try {
-			div.save( attrKey );
-		// quota exceeded
-		} catch ( error ) {
-			// roll the value back to the previous value
-			if ( prevValue === null ) {
-				div.removeAttribute( key );
-			} else {
-				div.setAttribute( key, prevValue );
-			}
-
-			// expire old data and try again
-			store.userData();
-			try {
-				div.setAttribute( key, parsed );
-				div.save( attrKey );
-			} catch ( error ) {
-				// roll the value back to the previous value
-				if ( prevValue === null ) {
-					div.removeAttribute( key );
-				} else {
-					div.setAttribute( key, prevValue );
-				}
-				throw store.error();
-			}
-		}
-		return ret;
-	});
-}() );
-
-// in-memory storage
-// fallback for all browsers to enable the API even if we can't persist data
-(function() {
-	var memory = {},
-		timeout = {};
-
-	function copy( obj ) {
-		return obj === undefined ? undefined : JSON.parse( JSON.stringify( obj ) );
-	}
-
-	store.addType( "memory", function( key, value, options ) {
-		if ( !key ) {
-			return copy( memory );
-		}
-
-		if ( value === undefined ) {
-			return copy( memory[ key ] );
-		}
-
-		if ( timeout[ key ] ) {
-			clearTimeout( timeout[ key ] );
-			delete timeout[ key ];
-		}
-
-		if ( value === null ) {
-			delete memory[ key ];
-			return null;
-		}
-
-		memory[ key ] = value;
-		if ( options.expires ) {
-			timeout[ key ] = setTimeout(function() {
-				delete memory[ key ];
-				delete timeout[ key ];
-			}, options.expires );
-		}
-
-		return value;
-	});
-}() );
-
-}( this.amplify = this.amplify || {} ) );
-/*!
- * Amplify Request 1.1.0
- * 
- * Copyright 2011 appendTo LLC. (http://appendto.com/team)
- * Dual licensed under the MIT or GPL licenses.
- * http://appendto.com/open-source-licenses
- * 
- * http://amplifyjs.com
- */
-(function( amplify, undefined ) {
-
-function noop() {}
-function isFunction( obj ) {
-	return ({}).toString.call( obj ) === "[object Function]";
-}
-
-function async( fn ) {
-	var isAsync = false;
-	setTimeout(function() {
-		isAsync = true;
-	}, 1 );
-	return function() {
-		var that = this,
-			args = arguments;
-		if ( isAsync ) {
-			fn.apply( that, args );
-		} else {
-			setTimeout(function() {
-				fn.apply( that, args );
-			}, 1 );
-		}
-	};
-}
-
-amplify.request = function( resourceId, data, callback ) {
-	// default to an empty hash just so we can handle a missing resourceId
-	// in one place
-	var settings = resourceId || {};
-
-	if ( typeof settings === "string" ) {
-		if ( isFunction( data ) ) {
-			callback = data;
-			data = {};
-		}
-		settings = {
-			resourceId: resourceId,
-			data: data || {},
-			success: callback
-		};
-	}
-
-	var request = { abort: noop },
-		resource = amplify.request.resources[ settings.resourceId ],
-		success = settings.success || noop,
-		error = settings.error || noop;
-	settings.success = async( function( data, status ) {
-		status = status || "success";
-		amplify.publish( "request.success", settings, data, status );
-		amplify.publish( "request.complete", settings, data, status );
-		success( data, status );
-	});
-	settings.error = async( function( data, status ) {
-		status = status || "error";
-		amplify.publish( "request.error", settings, data, status );
-		amplify.publish( "request.complete", settings, data, status );
-		error( data, status );
-	});
-
-	if ( !resource ) {
-		if ( !settings.resourceId ) {
-			throw "amplify.request: no resourceId provided";
-		}
-		throw "amplify.request: unknown resourceId: " + settings.resourceId;
-	}
-
-	if ( !amplify.publish( "request.before", settings ) ) {
-		settings.error( null, "abort" );
-		return;
-	}
-
-	amplify.request.resources[ settings.resourceId ]( settings, request );
-	return request;
-};
-
-amplify.request.types = {};
-amplify.request.resources = {};
-amplify.request.define = function( resourceId, type, settings ) {
-	if ( typeof type === "string" ) {
-		if ( !( type in amplify.request.types ) ) {
-			throw "amplify.request.define: unknown type: " + type;
-		}
-
-		settings.resourceId = resourceId;
-		amplify.request.resources[ resourceId ] =
-			amplify.request.types[ type ]( settings );
-	} else {
-		// no pre-processor or settings for one-off types (don't invoke)
-		amplify.request.resources[ resourceId ] = type;
-	}
-};
-
-}( amplify ) );
-
-
-
-
-
-(function( amplify, $, undefined ) {
-
-var xhrProps = [ "status", "statusText", "responseText", "responseXML", "readyState" ],
-    rurlData = /\{([^\}]+)\}/g;
-
-amplify.request.types.ajax = function( defnSettings ) {
-	defnSettings = $.extend({
-		type: "GET"
-	}, defnSettings );
-
-	return function( settings, request ) {
-		var xhr,
-			url = defnSettings.url,
-			abort = request.abort,
-			ajaxSettings = $.extend( true, {}, defnSettings, { data: settings.data } ),
-			aborted = false,
-			ampXHR = {
-				readyState: 0,
-				setRequestHeader: function( name, value ) {
-					return xhr.setRequestHeader( name, value );
-				},
-				getAllResponseHeaders: function() {
-					return xhr.getAllResponseHeaders();
-				},
-				getResponseHeader: function( key ) {
-					return xhr.getResponseHeader( key );
-				},
-				overrideMimeType: function( type ) {
-					return xhr.overrideMideType( type );
-				},
-				abort: function() {
-					aborted = true;
-					try {
-						xhr.abort();
-					// IE 7 throws an error when trying to abort
-					} catch( e ) {}
-					handleResponse( null, "abort" );
-				},
-				success: function( data, status ) {
-					settings.success( data, status );
-				},
-				error: function( data, status ) {
-					settings.error( data, status );
-				}
-			};
-
-		amplify.publish( "request.ajax.preprocess",
-			defnSettings, settings, ajaxSettings, ampXHR );
-
-		$.extend( ajaxSettings, {
-			success: function( data, status ) {
-				handleResponse( data, status );
-			},
-			error: function( _xhr, status ) {
-				handleResponse( null, status );
-			},
-			beforeSend: function( _xhr, _ajaxSettings ) {
-				xhr = _xhr;
-				ajaxSettings = _ajaxSettings;
-				var ret = defnSettings.beforeSend ?
-					defnSettings.beforeSend.call( this, ampXHR, ajaxSettings ) : true;
-				return ret && amplify.publish( "request.before.ajax",
-					defnSettings, settings, ajaxSettings, ampXHR );
-			}
-		});
-		$.ajax( ajaxSettings );
-
-		function handleResponse( data, status ) {
-			$.each( xhrProps, function( i, key ) {
-				try {
-					ampXHR[ key ] = xhr[ key ];
-				} catch( e ) {}
-			});
-			// Playbook returns "HTTP/1.1 200 OK"
-			// TODO: something also returns "OK", what?
-			if ( /OK$/.test( ampXHR.statusText ) ) {
-				ampXHR.statusText = "success";
-			}
-			if ( data === undefined ) {
-				// TODO: add support for ajax errors with data
-				data = null;
-			}
-			if ( aborted ) {
-				status = "abort";
-			}
-			if ( /timeout|error|abort/.test( status ) ) {
-				ampXHR.error( data, status );
-			} else {
-				ampXHR.success( data, status );
-			}
-			// avoid handling a response multiple times
-			// this can happen if a request is aborted
-			// TODO: figure out if this breaks polling or multi-part responses
-			handleResponse = $.noop;
-		}
-
-		request.abort = function() {
-			ampXHR.abort();
-			abort.call( this );
-		};
-	};
-};
-
-
-
-amplify.subscribe( "request.ajax.preprocess", function( defnSettings, settings, ajaxSettings ) {
-	var mappedKeys = [],
-		data = ajaxSettings.data;
-
-	if ( typeof data === "string" ) {
-		return;
-	}
-
-	data = $.extend( true, {}, defnSettings.data, data );
-
-	ajaxSettings.url = ajaxSettings.url.replace( rurlData, function ( m, key ) {
-		if ( key in data ) {
-		    mappedKeys.push( key );
-		    return data[ key ];
-		}
-	});
-
-	// We delete the keys later so duplicates are still replaced
-	$.each( mappedKeys, function ( i, key ) {
-		delete data[ key ];
-	});
-
-	ajaxSettings.data = data;
-});
-
-
-
-amplify.subscribe( "request.ajax.preprocess", function( defnSettings, settings, ajaxSettings ) {
-	var data = ajaxSettings.data,
-		dataMap = defnSettings.dataMap;
-
-	if ( !dataMap || typeof data === "string" ) {
-		return;
-	}
-
-	if ( $.isFunction( dataMap ) ) {
-		ajaxSettings.data = dataMap( data );
-	} else {
-		$.each( defnSettings.dataMap, function( orig, replace ) {
-			if ( orig in data ) {
-				data[ replace ] = data[ orig ];
-				delete data[ orig ];
-			}
-		});
-		ajaxSettings.data = data;
-	}
-});
-
-
-
-var cache = amplify.request.cache = {
-	_key: function( resourceId, url, data ) {
-		data = url + data;
-		var length = data.length,
-			i = 0,
-			checksum = chunk();
-
-		while ( i < length ) {
-			checksum ^= chunk();
-		}
-
-		function chunk() {
-			return data.charCodeAt( i++ ) << 24 |
-				data.charCodeAt( i++ ) << 16 |
-				data.charCodeAt( i++ ) << 8 |
-				data.charCodeAt( i++ ) << 0;
-		}
-
-		return "request-" + resourceId + "-" + checksum;
-	},
-
-	_default: (function() {
-		var memoryStore = {};
-		return function( resource, settings, ajaxSettings, ampXHR ) {
-			// data is already converted to a string by the time we get here
-			var cacheKey = cache._key( settings.resourceId,
-					ajaxSettings.url, ajaxSettings.data ),
-				duration = resource.cache;
-
-			if ( cacheKey in memoryStore ) {
-				ampXHR.success( memoryStore[ cacheKey ] );
-				return false;
-			}
-			var success = ampXHR.success;
-			ampXHR.success = function( data ) {
-				memoryStore[ cacheKey ] = data;
-				if ( typeof duration === "number" ) {
-					setTimeout(function() {
-						delete memoryStore[ cacheKey ];
-					}, duration );
-				}
-				success.apply( this, arguments );
-			};
-		};
-	}())
-};
-
-if ( amplify.store ) {
-	$.each( amplify.store.types, function( type ) {
-		cache[ type ] = function( resource, settings, ajaxSettings, ampXHR ) {
-			var cacheKey = cache._key( settings.resourceId,
-					ajaxSettings.url, ajaxSettings.data ),
-				cached = amplify.store[ type ]( cacheKey );
-
-			if ( cached ) {
-				ajaxSettings.success( cached );
-				return false;
-			}
-			var success = ampXHR.success;
-			ampXHR.success = function( data ) {	
-				amplify.store[ type ]( cacheKey, data, { expires: resource.cache.expires } );
-				success.apply( this, arguments );
-			};
-		};
-	});
-	cache.persist = cache[ amplify.store.type ];
-}
-
-amplify.subscribe( "request.before.ajax", function( resource ) {
-	var cacheType = resource.cache;
-	if ( cacheType ) {
-		// normalize between objects and strings/booleans/numbers
-		cacheType = cacheType.type || cacheType;
-		return cache[ cacheType in cache ? cacheType : "_default" ]
-			.apply( this, arguments );
-	}
-});
-
-
-
-amplify.request.decoders = {
-	// http://labs.omniti.com/labs/jsend
-	jsend: function( data, status, ampXHR, success, error ) {
-		if ( data.status === "success" ) {
-			success( data.data );
-		} else if ( data.status === "fail" ) {
-			error( data.data, "fail" );
-		} else if ( data.status === "error" ) {
-			delete data.status;
-			error( data, "error" );
-		}
-	}
-};
-
-amplify.subscribe( "request.before.ajax", function( resource, settings, ajaxSettings, ampXHR ) {
-	var _success = ampXHR.success,
-		_error = ampXHR.error,
-		decoder = $.isFunction( resource.decoder )
-			? resource.decoder
-			: resource.decoder in amplify.request.decoders
-				? amplify.request.decoders[ resource.decoder ]
-				: amplify.request.decoders._default;
-
-	if ( !decoder ) {
-		return;
-	}
-
-	function success( data, status ) {
-		_success( data, status );
-	}
-	function error( data, status ) {
-		_error( data, status );
-	}
-	ampXHR.success = function( data, status ) {
-		decoder( data, status, ampXHR, success, error );
-	};
-	ampXHR.error = function( data, status ) {
-		decoder( data, status, ampXHR, success, error );
-	};
-});
-
-}( amplify, jQuery ) );
-
-define("amplify", ["jquery"], (function (global) {
-    return function () {
-        var ret, fn;
-        return ret || global.amplify;
-    };
-}(this)));
-
-/*jshint undef : true*/
-/*globals define:true*/
-define('modules/core/ControllerBase',["app","backbone"],
-
-function(app,Backbone) {
-	var ControllerBase = Backbone.Model.extend({
-		initializeView: function() {
-			throw "abstract";
-		}
-	});
-
-	return ControllerBase;
-});
-/*jshint undef : true*/
-/*globals define:true*/
-define('modules/core/constants',[], function() {
-
-	var constants = {
-		
-	};
-
-	return constants;
-});
-/*jshint undef : true*/
-/*globals define:true*/
-define('modules/core/core',[ // LIB
-	"amplify",
-
-	"app", "modules/core/logger", "modules/core/ControllerBase", "modules/core/constants"
-],
-
-function(Amplify, app, logger, ControllerBase, Constants) {
-	var core = {};
-	core.Logger = logger;
-	core.ControllerBase = ControllerBase;
-	core.Amplify = Amplify;
-	core.Constants = Constants;
-
-	if (typeof String.prototype.trim !== 'function') {
-		String.prototype.trim = function() {
-			return this.replace(/^\s+|\s+$/g, '');
-		};
-	}
-
-	return core;
-
-});
-define('router',[
-	// Application.
-	"backbone", "app", "modules/core/core"
-],
-
-function(Backbone, app, Core) {
-	var Router, routeFunction = function(controllerName, param, param2) {
-			Core.Logger.log('router', 'ROUTING: ' + controllerName + 'with params : ' + param + 'with params2 : ' + param2);
-
-			if (controllerName.indexOf('?') > -1) {
-				controllerName = controllerName.split("?")[0];
-			}
-
-
-			var controller = this.controllers[controllerName];
-			if ( !! controller) {
-				Core.Logger.log('router', 'calling initializeView for ' + controllerName);
-
-				controller.initializeView.apply(controller, Array.prototype.slice.call(arguments, 1));
-			} else {
-				// TODO do something!!!!!
-			}
-		};
-	// Defining the application router, you can attach sub routers here.
-	Router = Backbone.Router.extend({
-		routes: {
-			"": "index",
-			"/": "index"
-		},
-		controllers: {},
-		setController: function(name, controller) {
-			this.controllers[name] = controller;
-		},
-
-		initialize: function(options) {
-			var main = app.useLayout("main");
-			app.Main = main;
-			this.routeFunction = routeFunction;
-
-			this.route("app/:controllerName", "routeFunction");
-			this.route("app/:controllerName/:param", "routeFunction");
-			this.route("app/:controllerName/:param/:param2", "routeFunction");
-			this.route("app/:controllerName/", "routeFunction");
-			this.route("app/:controllerName/:param/", "routeFunction");
-			this.route("app/:controllerName/:param/:param2/", "routeFunction");
-
-			this.route("app/:controllerName", "routeFunction");
-			this.route("app/:controllerName/", "routeFunction");
-
-			this.route("app/:controllerName/:param", "routeFunction");
-			this.route("app/:controllerName/:param/:param2", "routeFunction");
-
-			this.route("app/:controllerName/chart/:charttype", "routeFunction");
-			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/", "routeFunction");
-			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo", "routeFunction");			
-			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo/group/:groupVar", "routeFunction");
-
-		},
-		index: function() {
-
-			this.navigate("main", {
-				trigger: true
-			});
-
-		}
-	});
-	// Define your master router on the application namespace and trigger all
-	// navigation from this instance.
-	app.router = new Router();
-	app.Router = app.router;
-	return app.router;
-
-});
-define('helpers',["handlebars"],
-
-	function(Handlebars) {
-		var originalCompile = Handlebars.compile;
-
-		Handlebars.compile = function(program, options) {
-			if (!options) {
-				options = {
-					data: true,
-					stringParams: true
-				};
-			}
-
-			return originalCompile.call(this, program, options);
-		};
-
-		var id = 0;
-		window.actionCollection = [];
-
-		Handlebars.registerHelper('action', function(actionName, other) {
-			var options = arguments[arguments.length - 1];
-			var count = window.actionCollection.length;
-			window.actionCollection.push(function() {
-				if ( !! other.contexts[0][actionName]) {
-					other.contexts[0][actionName].call(other.contexts[0]);
-				} else {
-					other.contexts[0].options[actionName].call(other.contexts[0]);
-				}
-			});
-
-			return new Handlebars.SafeString(options.hash.on + "='actionCollection[" + count + "]()'");
-		});
-
-		Handlebars.registerHelper('i18n', function(propertyName, view) {
-			var propertyArray, replaceArray, i, result, internationalizedString, options = arguments[arguments.length - 1];
-
-			if ( !! propertyName) {
-				propertyArray = propertyName.split('.');
-				if ( !! window.mobile && !! window.mobile.i18n) {
-					result = window.mobile.i18n;
-				} else {
-					throw "i18n not defined";
-				}
-				for (i = 0; i < propertyArray.length; i++) {
-					result = result[propertyArray[i]];
-				}
-
-				if ( !! options.hash.replace) {
-					replaceArray = options.hash.replace.split(',');
-					for (i = 0; i < replaceArray.length; i++) {
-						result = result.replace('{' + i + '}', view.contexts[0][replaceArray[i]]);
-					}
-				}
-			}
-			if ( !! result) {
-				internationalizedString = new Handlebars.SafeString(result);
-			} else {
-				if ( !! window.console && !! window.console.error) {
-					window.console.error('Error occurred when looking for key ' + propertyName);
-				}
-			}
-			return internationalizedString;
-		});
-
-		Handlebars.registerHelper('bind', function(propertyName) {
-			var options = arguments[arguments.length - 1];
-			var context = options.contexts[0];
-			var _id = id;
-			id++;
-			context.model.on("change:" + propertyName, function() {
-				context.$el.find('#bind_variable_' + _id).html(context.model.get(propertyName));
-			});
-
-			return new Handlebars.SafeString("<span type='text/x-placeholder' id='bind_variable_" + _id + "'>" + context.model.get(propertyName) + "</span>");
-		});
-
-		Handlebars.registerHelper('if', function(propertyName, options) {
-			var propertyArray, i, result;
-			if ( !! propertyName) {
-				propertyArray = propertyName.split('.');
-				if ( !! options) {
-					result = options.contexts[0]; // options.contexts[0]
-					// eh a view
-				} else {
-					throw "view not defined";
-				}
-				for (i = 0; i < propertyArray.length; i++) {
-					result = result[propertyArray[i]];
-				}
-				if (typeof result === 'undefined') {
-					return options.inverse(this);
-				}
-				if (typeof result === 'function') {
-					return (result.call(options.contexts[0])) ? options.fn(this) : options.inverse(this);
-				}
-				if (typeof result.length !== 'undefined') {
-					return ( !! result.length) ? options.fn(this) : options.inverse(this);
-				}
-				return ( !! result) ? options.fn(this) : options.inverse(this);
-
-			}
-			return options.inverse(this);
-		});
-
-		Handlebars.registerHelper('call', function(propertyName, options) {
-			var view = options.contexts[0];
-			if (typeof view[propertyName] !== 'undefined') {
-				if (typeof view[propertyName] === 'function') {
-					return view[propertyName].call(view);
-				} else {
-					return view[propertyName];
-				}
-			}
-		});
-		Handlebars.registerHelper('each', function(propertyName, options) {
-			var propertyArray, i, result = "",
-				viewAttribute;
-			if ( !! propertyName) {
-				propertyArray = propertyName.split('.');
-				if ( !! options) {
-					viewAttribute = options.contexts[0]; // options.contexts[0]
-					// eh a view
-				} else {
-					throw "view not defined";
-				}
-				for (i = 0; i < propertyArray.length; i++) {
-					try {
-						viewAttribute = viewAttribute[propertyArray[i]];
-					} catch (err) {
-						return "";
-					}
-				}
-				if (typeof viewAttribute.length !== 'undefined') {
-					if (typeof viewAttribute === 'function') {
-						viewAttribute = viewAttribute();
-					}
-					for (i = 0; i < viewAttribute.length; i++) {
-						result += options.fn(viewAttribute[i]);
-					}
-				}
-			}
-			return result;
-		});
-	});
 d3 = function() {
   var d3 = {
     version: "3.2.3"
@@ -28957,6 +26109,4069 @@ define("d3", (function (global) {
     };
 }(this)));
 
+/* ========================================================================
+ * Bootstrap: alert.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#alerts
+ * ========================================================================
+ * Copyright 2013 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // ALERT CLASS DEFINITION
+  // ======================
+
+  var dismiss = '[data-dismiss="alert"]'
+  var Alert   = function (el) {
+    $(el).on('click', dismiss, this.close)
+  }
+
+  Alert.prototype.close = function (e) {
+    var $this    = $(this)
+    var selector = $this.attr('data-target')
+
+    if (!selector) {
+      selector = $this.attr('href')
+      selector = selector && selector.replace(/.*(?=#[^\s]*$)/, '') // strip for ie7
+    }
+
+    var $parent = $(selector)
+
+    if (e) e.preventDefault()
+
+    if (!$parent.length) {
+      $parent = $this.hasClass('alert') ? $this : $this.parent()
+    }
+
+    $parent.trigger(e = $.Event('close.bs.alert'))
+
+    if (e.isDefaultPrevented()) return
+
+    $parent.removeClass('in')
+
+    function removeElement() {
+      $parent.trigger('closed.bs.alert').remove()
+    }
+
+    $.support.transition && $parent.hasClass('fade') ?
+      $parent
+        .one($.support.transition.end, removeElement)
+        .emulateTransitionEnd(150) :
+      removeElement()
+  }
+
+
+  // ALERT PLUGIN DEFINITION
+  // =======================
+
+  var old = $.fn.alert
+
+  $.fn.alert = function (option) {
+    return this.each(function () {
+      var $this = $(this)
+      var data  = $this.data('bs.alert')
+
+      if (!data) $this.data('bs.alert', (data = new Alert(this)))
+      if (typeof option == 'string') data[option].call($this)
+    })
+  }
+
+  $.fn.alert.Constructor = Alert
+
+
+  // ALERT NO CONFLICT
+  // =================
+
+  $.fn.alert.noConflict = function () {
+    $.fn.alert = old
+    return this
+  }
+
+
+  // ALERT DATA-API
+  // ==============
+
+  $(document).on('click.bs.alert.data-api', dismiss, Alert.prototype.close)
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: button.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#buttons
+ * ========================================================================
+ * Copyright 2013 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // BUTTON PUBLIC CLASS DEFINITION
+  // ==============================
+
+  var Button = function (element, options) {
+    this.$element = $(element)
+    this.options  = $.extend({}, Button.DEFAULTS, options)
+  }
+
+  Button.DEFAULTS = {
+    loadingText: 'loading...'
+  }
+
+  Button.prototype.setState = function (state) {
+    var d    = 'disabled'
+    var $el  = this.$element
+    var val  = $el.is('input') ? 'val' : 'html'
+    var data = $el.data()
+
+    state = state + 'Text'
+
+    if (!data.resetText) $el.data('resetText', $el[val]())
+
+    $el[val](data[state] || this.options[state])
+
+    // push to event loop to allow forms to submit
+    setTimeout(function () {
+      state == 'loadingText' ?
+        $el.addClass(d).attr(d, d) :
+        $el.removeClass(d).removeAttr(d);
+    }, 0)
+  }
+
+  Button.prototype.toggle = function () {
+    var $parent = this.$element.closest('[data-toggle="buttons"]')
+
+    if ($parent.length) {
+      var $input = this.$element.find('input')
+        .prop('checked', !this.$element.hasClass('active'))
+        .trigger('change')
+      if ($input.prop('type') === 'radio') $parent.find('.active').removeClass('active')
+    }
+
+    this.$element.toggleClass('active')
+  }
+
+
+  // BUTTON PLUGIN DEFINITION
+  // ========================
+
+  var old = $.fn.button
+
+  $.fn.button = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.button')
+      var options = typeof option == 'object' && option
+
+      if (!data) $this.data('bs.button', (data = new Button(this, options)))
+
+      if (option == 'toggle') data.toggle()
+      else if (option) data.setState(option)
+    })
+  }
+
+  $.fn.button.Constructor = Button
+
+
+  // BUTTON NO CONFLICT
+  // ==================
+
+  $.fn.button.noConflict = function () {
+    $.fn.button = old
+    return this
+  }
+
+
+  // BUTTON DATA-API
+  // ===============
+
+  $(document).on('click.bs.button.data-api', '[data-toggle^=button]', function (e) {
+    var $btn = $(e.target)
+    if (!$btn.hasClass('btn')) $btn = $btn.closest('.btn')
+    $btn.button('toggle')
+    e.preventDefault()
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: carousel.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#carousel
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // CAROUSEL CLASS DEFINITION
+  // =========================
+
+  var Carousel = function (element, options) {
+    this.$element    = $(element)
+    this.$indicators = this.$element.find('.carousel-indicators')
+    this.options     = options
+    this.paused      =
+    this.sliding     =
+    this.interval    =
+    this.$active     =
+    this.$items      = null
+
+    this.options.pause == 'hover' && this.$element
+      .on('mouseenter', $.proxy(this.pause, this))
+      .on('mouseleave', $.proxy(this.cycle, this))
+  }
+
+  Carousel.DEFAULTS = {
+    interval: 5000
+  , pause: 'hover'
+  , wrap: true
+  }
+
+  Carousel.prototype.cycle =  function (e) {
+    e || (this.paused = false)
+
+    this.interval && clearInterval(this.interval)
+
+    this.options.interval
+      && !this.paused
+      && (this.interval = setInterval($.proxy(this.next, this), this.options.interval))
+
+    return this
+  }
+
+  Carousel.prototype.getActiveIndex = function () {
+    this.$active = this.$element.find('.item.active')
+    this.$items  = this.$active.parent().children()
+
+    return this.$items.index(this.$active)
+  }
+
+  Carousel.prototype.to = function (pos) {
+    var that        = this
+    var activeIndex = this.getActiveIndex()
+
+    if (pos > (this.$items.length - 1) || pos < 0) return
+
+    if (this.sliding)       return this.$element.one('slid', function () { that.to(pos) })
+    if (activeIndex == pos) return this.pause().cycle()
+
+    return this.slide(pos > activeIndex ? 'next' : 'prev', $(this.$items[pos]))
+  }
+
+  Carousel.prototype.pause = function (e) {
+    e || (this.paused = true)
+
+    if (this.$element.find('.next, .prev').length && $.support.transition.end) {
+      this.$element.trigger($.support.transition.end)
+      this.cycle(true)
+    }
+
+    this.interval = clearInterval(this.interval)
+
+    return this
+  }
+
+  Carousel.prototype.next = function () {
+    if (this.sliding) return
+    return this.slide('next')
+  }
+
+  Carousel.prototype.prev = function () {
+    if (this.sliding) return
+    return this.slide('prev')
+  }
+
+  Carousel.prototype.slide = function (type, next) {
+    var $active   = this.$element.find('.item.active')
+    var $next     = next || $active[type]()
+    var isCycling = this.interval
+    var direction = type == 'next' ? 'left' : 'right'
+    var fallback  = type == 'next' ? 'first' : 'last'
+    var that      = this
+
+    if (!$next.length) {
+      if (!this.options.wrap) return
+      $next = this.$element.find('.item')[fallback]()
+    }
+
+    this.sliding = true
+
+    isCycling && this.pause()
+
+    var e = $.Event('slide.bs.carousel', { relatedTarget: $next[0], direction: direction })
+
+    if ($next.hasClass('active')) return
+
+    if (this.$indicators.length) {
+      this.$indicators.find('.active').removeClass('active')
+      this.$element.one('slid', function () {
+        var $nextIndicator = $(that.$indicators.children()[that.getActiveIndex()])
+        $nextIndicator && $nextIndicator.addClass('active')
+      })
+    }
+
+    if ($.support.transition && this.$element.hasClass('slide')) {
+      this.$element.trigger(e)
+      if (e.isDefaultPrevented()) return
+      $next.addClass(type)
+      $next[0].offsetWidth // force reflow
+      $active.addClass(direction)
+      $next.addClass(direction)
+      $active
+        .one($.support.transition.end, function () {
+          $next.removeClass([type, direction].join(' ')).addClass('active')
+          $active.removeClass(['active', direction].join(' '))
+          that.sliding = false
+          setTimeout(function () { that.$element.trigger('slid') }, 0)
+        })
+        .emulateTransitionEnd(600)
+    } else {
+      this.$element.trigger(e)
+      if (e.isDefaultPrevented()) return
+      $active.removeClass('active')
+      $next.addClass('active')
+      this.sliding = false
+      this.$element.trigger('slid')
+    }
+
+    isCycling && this.cycle()
+
+    return this
+  }
+
+
+  // CAROUSEL PLUGIN DEFINITION
+  // ==========================
+
+  var old = $.fn.carousel
+
+  $.fn.carousel = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.carousel')
+      var options = $.extend({}, Carousel.DEFAULTS, $this.data(), typeof option == 'object' && option)
+      var action  = typeof option == 'string' ? option : options.slide
+
+      if (!data) $this.data('bs.carousel', (data = new Carousel(this, options)))
+      if (typeof option == 'number') data.to(option)
+      else if (action) data[action]()
+      else if (options.interval) data.pause().cycle()
+    })
+  }
+
+  $.fn.carousel.Constructor = Carousel
+
+
+  // CAROUSEL NO CONFLICT
+  // ====================
+
+  $.fn.carousel.noConflict = function () {
+    $.fn.carousel = old
+    return this
+  }
+
+
+  // CAROUSEL DATA-API
+  // =================
+
+  $(document).on('click.bs.carousel.data-api', '[data-slide], [data-slide-to]', function (e) {
+    var $this   = $(this), href
+    var $target = $($this.attr('data-target') || (href = $this.attr('href')) && href.replace(/.*(?=#[^\s]+$)/, '')) //strip for ie7
+    var options = $.extend({}, $target.data(), $this.data())
+    var slideIndex = $this.attr('data-slide-to')
+    if (slideIndex) options.interval = false
+
+    $target.carousel(options)
+
+    if (slideIndex = $this.attr('data-slide-to')) {
+      $target.data('bs.carousel').to(slideIndex)
+    }
+
+    e.preventDefault()
+  })
+
+  $(window).on('load', function () {
+    $('[data-ride="carousel"]').each(function () {
+      var $carousel = $(this)
+      $carousel.carousel($carousel.data())
+    })
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: dropdown.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#dropdowns
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // DROPDOWN CLASS DEFINITION
+  // =========================
+
+  var backdrop = '.dropdown-backdrop'
+  var toggle   = '[data-toggle=dropdown]'
+  var Dropdown = function (element) {
+    var $el = $(element).on('click.bs.dropdown', this.toggle)
+  }
+
+  Dropdown.prototype.toggle = function (e) {
+    var $this = $(this)
+
+    if ($this.is('.disabled, :disabled')) return
+
+    var $parent  = getParent($this)
+    var isActive = $parent.hasClass('open')
+
+    clearMenus()
+
+    if (!isActive) {
+      if ('ontouchstart' in document.documentElement && !$parent.closest('.navbar-nav').length) {
+        // if mobile we we use a backdrop because click events don't delegate
+        $('<div class="dropdown-backdrop"/>').insertAfter($(this)).on('click', clearMenus)
+      }
+
+      $parent.trigger(e = $.Event('show.bs.dropdown'))
+
+      if (e.isDefaultPrevented()) return
+
+      $parent
+        .toggleClass('open')
+        .trigger('shown.bs.dropdown')
+
+      $this.focus()
+    }
+
+    return false
+  }
+
+  Dropdown.prototype.keydown = function (e) {
+    if (!/(38|40|27)/.test(e.keyCode)) return
+
+    var $this = $(this)
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    if ($this.is('.disabled, :disabled')) return
+
+    var $parent  = getParent($this)
+    var isActive = $parent.hasClass('open')
+
+    if (!isActive || (isActive && e.keyCode == 27)) {
+      if (e.which == 27) $parent.find(toggle).focus()
+      return $this.click()
+    }
+
+    var $items = $('[role=menu] li:not(.divider):visible a', $parent)
+
+    if (!$items.length) return
+
+    var index = $items.index($items.filter(':focus'))
+
+    if (e.keyCode == 38 && index > 0)                 index--                        // up
+    if (e.keyCode == 40 && index < $items.length - 1) index++                        // down
+    if (!~index)                                      index=0
+
+    $items.eq(index).focus()
+  }
+
+  function clearMenus() {
+    $(backdrop).remove()
+    $(toggle).each(function (e) {
+      var $parent = getParent($(this))
+      if (!$parent.hasClass('open')) return
+      $parent.trigger(e = $.Event('hide.bs.dropdown'))
+      if (e.isDefaultPrevented()) return
+      $parent.removeClass('open').trigger('hidden.bs.dropdown')
+    })
+  }
+
+  function getParent($this) {
+    var selector = $this.attr('data-target')
+
+    if (!selector) {
+      selector = $this.attr('href')
+      selector = selector && /#/.test(selector) && selector.replace(/.*(?=#[^\s]*$)/, '') //strip for ie7
+    }
+
+    var $parent = selector && $(selector)
+
+    return $parent && $parent.length ? $parent : $this.parent()
+  }
+
+
+  // DROPDOWN PLUGIN DEFINITION
+  // ==========================
+
+  var old = $.fn.dropdown
+
+  $.fn.dropdown = function (option) {
+    return this.each(function () {
+      var $this = $(this)
+      var data  = $this.data('dropdown')
+
+      if (!data) $this.data('dropdown', (data = new Dropdown(this)))
+      if (typeof option == 'string') data[option].call($this)
+    })
+  }
+
+  $.fn.dropdown.Constructor = Dropdown
+
+
+  // DROPDOWN NO CONFLICT
+  // ====================
+
+  $.fn.dropdown.noConflict = function () {
+    $.fn.dropdown = old
+    return this
+  }
+
+
+  // APPLY TO STANDARD DROPDOWN ELEMENTS
+  // ===================================
+
+  $(document)
+    .on('click.bs.dropdown.data-api', clearMenus)
+    .on('click.bs.dropdown.data-api', '.dropdown form', function (e) { e.stopPropagation() })
+    .on('click.bs.dropdown.data-api'  , toggle, Dropdown.prototype.toggle)
+    .on('keydown.bs.dropdown.data-api', toggle + ', [role=menu]' , Dropdown.prototype.keydown)
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: modal.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#modals
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // MODAL CLASS DEFINITION
+  // ======================
+
+  var Modal = function (element, options) {
+    this.options   = options
+    this.$element  = $(element)
+    this.$backdrop =
+    this.isShown   = null
+
+    if (this.options.remote) this.$element.load(this.options.remote)
+  }
+
+  Modal.DEFAULTS = {
+      backdrop: true
+    , keyboard: true
+    , show: true
+  }
+
+  Modal.prototype.toggle = function (_relatedTarget) {
+    return this[!this.isShown ? 'show' : 'hide'](_relatedTarget)
+  }
+
+  Modal.prototype.show = function (_relatedTarget) {
+    var that = this
+    var e    = $.Event('show.bs.modal', { relatedTarget: _relatedTarget })
+
+    this.$element.trigger(e)
+
+    if (this.isShown || e.isDefaultPrevented()) return
+
+    this.isShown = true
+
+    this.escape()
+
+    this.$element.on('click.dismiss.modal', '[data-dismiss="modal"]', $.proxy(this.hide, this))
+
+    this.backdrop(function () {
+      var transition = $.support.transition && that.$element.hasClass('fade')
+
+      if (!that.$element.parent().length) {
+        that.$element.appendTo(document.body) // don't move modals dom position
+      }
+
+      that.$element.show()
+
+      if (transition) {
+        that.$element[0].offsetWidth // force reflow
+      }
+
+      that.$element
+        .addClass('in')
+        .attr('aria-hidden', false)
+
+      that.enforceFocus()
+
+      var e = $.Event('shown.bs.modal', { relatedTarget: _relatedTarget })
+
+      transition ?
+        that.$element.find('.modal-dialog') // wait for modal to slide in
+          .one($.support.transition.end, function () {
+            that.$element.focus().trigger(e)
+          })
+          .emulateTransitionEnd(300) :
+        that.$element.focus().trigger(e)
+    })
+  }
+
+  Modal.prototype.hide = function (e) {
+    if (e) e.preventDefault()
+
+    e = $.Event('hide.bs.modal')
+
+    this.$element.trigger(e)
+
+    if (!this.isShown || e.isDefaultPrevented()) return
+
+    this.isShown = false
+
+    this.escape()
+
+    $(document).off('focusin.bs.modal')
+
+    this.$element
+      .removeClass('in')
+      .attr('aria-hidden', true)
+      .off('click.dismiss.modal')
+
+    $.support.transition && this.$element.hasClass('fade') ?
+      this.$element
+        .one($.support.transition.end, $.proxy(this.hideModal, this))
+        .emulateTransitionEnd(300) :
+      this.hideModal()
+  }
+
+  Modal.prototype.enforceFocus = function () {
+    $(document)
+      .off('focusin.bs.modal') // guard against infinite focus loop
+      .on('focusin.bs.modal', $.proxy(function (e) {
+        if (this.$element[0] !== e.target && !this.$element.has(e.target).length) {
+          this.$element.focus()
+        }
+      }, this))
+  }
+
+  Modal.prototype.escape = function () {
+    if (this.isShown && this.options.keyboard) {
+      this.$element.on('keyup.dismiss.bs.modal', $.proxy(function (e) {
+        e.which == 27 && this.hide()
+      }, this))
+    } else if (!this.isShown) {
+      this.$element.off('keyup.dismiss.bs.modal')
+    }
+  }
+
+  Modal.prototype.hideModal = function () {
+    var that = this
+    this.$element.hide()
+    this.backdrop(function () {
+      that.removeBackdrop()
+      that.$element.trigger('hidden.bs.modal')
+    })
+  }
+
+  Modal.prototype.removeBackdrop = function () {
+    this.$backdrop && this.$backdrop.remove()
+    this.$backdrop = null
+  }
+
+  Modal.prototype.backdrop = function (callback) {
+    var that    = this
+    var animate = this.$element.hasClass('fade') ? 'fade' : ''
+
+    if (this.isShown && this.options.backdrop) {
+      var doAnimate = $.support.transition && animate
+
+      this.$backdrop = $('<div class="modal-backdrop ' + animate + '" />')
+        .appendTo(document.body)
+
+      this.$element.on('click.dismiss.modal', $.proxy(function (e) {
+        if (e.target !== e.currentTarget) return
+        this.options.backdrop == 'static'
+          ? this.$element[0].focus.call(this.$element[0])
+          : this.hide.call(this)
+      }, this))
+
+      if (doAnimate) this.$backdrop[0].offsetWidth // force reflow
+
+      this.$backdrop.addClass('in')
+
+      if (!callback) return
+
+      doAnimate ?
+        this.$backdrop
+          .one($.support.transition.end, callback)
+          .emulateTransitionEnd(150) :
+        callback()
+
+    } else if (!this.isShown && this.$backdrop) {
+      this.$backdrop.removeClass('in')
+
+      $.support.transition && this.$element.hasClass('fade')?
+        this.$backdrop
+          .one($.support.transition.end, callback)
+          .emulateTransitionEnd(150) :
+        callback()
+
+    } else if (callback) {
+      callback()
+    }
+  }
+
+
+  // MODAL PLUGIN DEFINITION
+  // =======================
+
+  var old = $.fn.modal
+
+  $.fn.modal = function (option, _relatedTarget) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.modal')
+      var options = $.extend({}, Modal.DEFAULTS, $this.data(), typeof option == 'object' && option)
+
+      if (!data) $this.data('bs.modal', (data = new Modal(this, options)))
+      if (typeof option == 'string') data[option](_relatedTarget)
+      else if (options.show) data.show(_relatedTarget)
+    })
+  }
+
+  $.fn.modal.Constructor = Modal
+
+
+  // MODAL NO CONFLICT
+  // =================
+
+  $.fn.modal.noConflict = function () {
+    $.fn.modal = old
+    return this
+  }
+
+
+  // MODAL DATA-API
+  // ==============
+
+  $(document).on('click.bs.modal.data-api', '[data-toggle="modal"]', function (e) {
+    var $this   = $(this)
+    var href    = $this.attr('href')
+    var $target = $($this.attr('data-target') || (href && href.replace(/.*(?=#[^\s]+$)/, ''))) //strip for ie7
+    var option  = $target.data('modal') ? 'toggle' : $.extend({ remote: !/#/.test(href) && href }, $target.data(), $this.data())
+
+    e.preventDefault()
+
+    $target
+      .modal(option, this)
+      .one('hide', function () {
+        $this.is(':visible') && $this.focus()
+      })
+  })
+
+  $(document)
+    .on('show.bs.modal',  '.modal', function () { $(document.body).addClass('modal-open') })
+    .on('hidden.bs.modal', '.modal', function () { $(document.body).removeClass('modal-open') })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: tooltip.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#tooltip
+ * Inspired by the original jQuery.tipsy by Jason Frame
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // TOOLTIP PUBLIC CLASS DEFINITION
+  // ===============================
+
+  var Tooltip = function (element, options) {
+    this.type       =
+    this.options    =
+    this.enabled    =
+    this.timeout    =
+    this.hoverState =
+    this.$element   = null
+
+    this.init('tooltip', element, options)
+  }
+
+  Tooltip.DEFAULTS = {
+    animation: true
+  , placement: 'top'
+  , selector: false
+  , template: '<div class="tooltip"><div class="tooltip-arrow"></div><div class="tooltip-inner"></div></div>'
+  , trigger: 'hover focus'
+  , title: ''
+  , delay: 0
+  , html: false
+  , container: false
+  }
+
+  Tooltip.prototype.init = function (type, element, options) {
+    this.enabled  = true
+    this.type     = type
+    this.$element = $(element)
+    this.options  = this.getOptions(options)
+
+    var triggers = this.options.trigger.split(' ')
+
+    for (var i = triggers.length; i--;) {
+      var trigger = triggers[i]
+
+      if (trigger == 'click') {
+        this.$element.on('click.' + this.type, this.options.selector, $.proxy(this.toggle, this))
+      } else if (trigger != 'manual') {
+        var eventIn  = trigger == 'hover' ? 'mouseenter' : 'focus'
+        var eventOut = trigger == 'hover' ? 'mouseleave' : 'blur'
+
+        this.$element.on(eventIn  + '.' + this.type, this.options.selector, $.proxy(this.enter, this))
+        this.$element.on(eventOut + '.' + this.type, this.options.selector, $.proxy(this.leave, this))
+      }
+    }
+
+    this.options.selector ?
+      (this._options = $.extend({}, this.options, { trigger: 'manual', selector: '' })) :
+      this.fixTitle()
+  }
+
+  Tooltip.prototype.getDefaults = function () {
+    return Tooltip.DEFAULTS
+  }
+
+  Tooltip.prototype.getOptions = function (options) {
+    options = $.extend({}, this.getDefaults(), this.$element.data(), options)
+
+    if (options.delay && typeof options.delay == 'number') {
+      options.delay = {
+        show: options.delay
+      , hide: options.delay
+      }
+    }
+
+    return options
+  }
+
+  Tooltip.prototype.getDelegateOptions = function () {
+    var options  = {}
+    var defaults = this.getDefaults()
+
+    this._options && $.each(this._options, function (key, value) {
+      if (defaults[key] != value) options[key] = value
+    })
+
+    return options
+  }
+
+  Tooltip.prototype.enter = function (obj) {
+    var self = obj instanceof this.constructor ?
+      obj : $(obj.currentTarget)[this.type](this.getDelegateOptions()).data('bs.' + this.type)
+
+    clearTimeout(self.timeout)
+
+    self.hoverState = 'in'
+
+    if (!self.options.delay || !self.options.delay.show) return self.show()
+
+    self.timeout = setTimeout(function () {
+      if (self.hoverState == 'in') self.show()
+    }, self.options.delay.show)
+  }
+
+  Tooltip.prototype.leave = function (obj) {
+    var self = obj instanceof this.constructor ?
+      obj : $(obj.currentTarget)[this.type](this.getDelegateOptions()).data('bs.' + this.type)
+
+    clearTimeout(self.timeout)
+
+    self.hoverState = 'out'
+
+    if (!self.options.delay || !self.options.delay.hide) return self.hide()
+
+    self.timeout = setTimeout(function () {
+      if (self.hoverState == 'out') self.hide()
+    }, self.options.delay.hide)
+  }
+
+  Tooltip.prototype.show = function () {
+    var e = $.Event('show.bs.'+ this.type)
+
+    if (this.hasContent() && this.enabled) {
+      this.$element.trigger(e)
+
+      if (e.isDefaultPrevented()) return
+
+      var $tip = this.tip()
+
+      this.setContent()
+
+      if (this.options.animation) $tip.addClass('fade')
+
+      var placement = typeof this.options.placement == 'function' ?
+        this.options.placement.call(this, $tip[0], this.$element[0]) :
+        this.options.placement
+
+      var autoToken = /\s?auto?\s?/i
+      var autoPlace = autoToken.test(placement)
+      if (autoPlace) placement = placement.replace(autoToken, '') || 'top'
+
+      $tip
+        .detach()
+        .css({ top: 0, left: 0, display: 'block' })
+        .addClass(placement)
+
+      this.options.container ? $tip.appendTo(this.options.container) : $tip.insertAfter(this.$element)
+
+      var pos          = this.getPosition()
+      var actualWidth  = $tip[0].offsetWidth
+      var actualHeight = $tip[0].offsetHeight
+
+      if (autoPlace) {
+        var $parent = this.$element.parent()
+
+        var orgPlacement = placement
+        var docScroll    = document.documentElement.scrollTop || document.body.scrollTop
+        var parentWidth  = this.options.container == 'body' ? window.innerWidth  : $parent.outerWidth()
+        var parentHeight = this.options.container == 'body' ? window.innerHeight : $parent.outerHeight()
+        var parentLeft   = this.options.container == 'body' ? 0 : $parent.offset().left
+
+        placement = placement == 'bottom' && pos.top   + pos.height  + actualHeight - docScroll > parentHeight  ? 'top'    :
+                    placement == 'top'    && pos.top   - docScroll   - actualHeight < 0                         ? 'bottom' :
+                    placement == 'right'  && pos.right + actualWidth > parentWidth                              ? 'left'   :
+                    placement == 'left'   && pos.left  - actualWidth < parentLeft                               ? 'right'  :
+                    placement
+
+        $tip
+          .removeClass(orgPlacement)
+          .addClass(placement)
+      }
+
+      var calculatedOffset = this.getCalculatedOffset(placement, pos, actualWidth, actualHeight)
+
+      this.applyPlacement(calculatedOffset, placement)
+      this.$element.trigger('shown.bs.' + this.type)
+    }
+  }
+
+  Tooltip.prototype.applyPlacement = function(offset, placement) {
+    var replace
+    var $tip   = this.tip()
+    var width  = $tip[0].offsetWidth
+    var height = $tip[0].offsetHeight
+
+    // manually read margins because getBoundingClientRect includes difference
+    var marginTop = parseInt($tip.css('margin-top'), 10)
+    var marginLeft = parseInt($tip.css('margin-left'), 10)
+
+    // we must check for NaN for ie 8/9
+    if (isNaN(marginTop))  marginTop  = 0
+    if (isNaN(marginLeft)) marginLeft = 0
+
+    offset.top  = offset.top  + marginTop
+    offset.left = offset.left + marginLeft
+
+    $tip
+      .offset(offset)
+      .addClass('in')
+
+    // check to see if placing tip in new offset caused the tip to resize itself
+    var actualWidth  = $tip[0].offsetWidth
+    var actualHeight = $tip[0].offsetHeight
+
+    if (placement == 'top' && actualHeight != height) {
+      replace = true
+      offset.top = offset.top + height - actualHeight
+    }
+
+    if (/bottom|top/.test(placement)) {
+      var delta = 0
+
+      if (offset.left < 0) {
+        delta       = offset.left * -2
+        offset.left = 0
+
+        $tip.offset(offset)
+
+        actualWidth  = $tip[0].offsetWidth
+        actualHeight = $tip[0].offsetHeight
+      }
+
+      this.replaceArrow(delta - width + actualWidth, actualWidth, 'left')
+    } else {
+      this.replaceArrow(actualHeight - height, actualHeight, 'top')
+    }
+
+    if (replace) $tip.offset(offset)
+  }
+
+  Tooltip.prototype.replaceArrow = function(delta, dimension, position) {
+    this.arrow().css(position, delta ? (50 * (1 - delta / dimension) + "%") : '')
+  }
+
+  Tooltip.prototype.setContent = function () {
+    var $tip  = this.tip()
+    var title = this.getTitle()
+
+    $tip.find('.tooltip-inner')[this.options.html ? 'html' : 'text'](title)
+    $tip.removeClass('fade in top bottom left right')
+  }
+
+  Tooltip.prototype.hide = function () {
+    var that = this
+    var $tip = this.tip()
+    var e    = $.Event('hide.bs.' + this.type)
+
+    function complete() {
+      if (that.hoverState != 'in') $tip.detach()
+    }
+
+    this.$element.trigger(e)
+
+    if (e.isDefaultPrevented()) return
+
+    $tip.removeClass('in')
+
+    $.support.transition && this.$tip.hasClass('fade') ?
+      $tip
+        .one($.support.transition.end, complete)
+        .emulateTransitionEnd(150) :
+      complete()
+
+    this.$element.trigger('hidden.bs.' + this.type)
+
+    return this
+  }
+
+  Tooltip.prototype.fixTitle = function () {
+    var $e = this.$element
+    if ($e.attr('title') || typeof($e.attr('data-original-title')) != 'string') {
+      $e.attr('data-original-title', $e.attr('title') || '').attr('title', '')
+    }
+  }
+
+  Tooltip.prototype.hasContent = function () {
+    return this.getTitle()
+  }
+
+  Tooltip.prototype.getPosition = function () {
+    var el = this.$element[0]
+    return $.extend({}, (typeof el.getBoundingClientRect == 'function') ? el.getBoundingClientRect() : {
+      width: el.offsetWidth
+    , height: el.offsetHeight
+    }, this.$element.offset())
+  }
+
+  Tooltip.prototype.getCalculatedOffset = function (placement, pos, actualWidth, actualHeight) {
+    return placement == 'bottom' ? { top: pos.top + pos.height,   left: pos.left + pos.width / 2 - actualWidth / 2  } :
+           placement == 'top'    ? { top: pos.top - actualHeight, left: pos.left + pos.width / 2 - actualWidth / 2  } :
+           placement == 'left'   ? { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left - actualWidth } :
+        /* placement == 'right' */ { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left + pos.width   }
+  }
+
+  Tooltip.prototype.getTitle = function () {
+    var title
+    var $e = this.$element
+    var o  = this.options
+
+    title = $e.attr('data-original-title')
+      || (typeof o.title == 'function' ? o.title.call($e[0]) :  o.title)
+
+    return title
+  }
+
+  Tooltip.prototype.tip = function () {
+    return this.$tip = this.$tip || $(this.options.template)
+  }
+
+  Tooltip.prototype.arrow = function () {
+    return this.$arrow = this.$arrow || this.tip().find('.tooltip-arrow')
+  }
+
+  Tooltip.prototype.validate = function () {
+    if (!this.$element[0].parentNode) {
+      this.hide()
+      this.$element = null
+      this.options  = null
+    }
+  }
+
+  Tooltip.prototype.enable = function () {
+    this.enabled = true
+  }
+
+  Tooltip.prototype.disable = function () {
+    this.enabled = false
+  }
+
+  Tooltip.prototype.toggleEnabled = function () {
+    this.enabled = !this.enabled
+  }
+
+  Tooltip.prototype.toggle = function (e) {
+    var self = e ? $(e.currentTarget)[this.type](this.getDelegateOptions()).data('bs.' + this.type) : this
+    self.tip().hasClass('in') ? self.leave(self) : self.enter(self)
+  }
+
+  Tooltip.prototype.destroy = function () {
+    this.hide().$element.off('.' + this.type).removeData('bs.' + this.type)
+  }
+
+
+  // TOOLTIP PLUGIN DEFINITION
+  // =========================
+
+  var old = $.fn.tooltip
+
+  $.fn.tooltip = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.tooltip')
+      var options = typeof option == 'object' && option
+
+      if (!data) $this.data('bs.tooltip', (data = new Tooltip(this, options)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.tooltip.Constructor = Tooltip
+
+
+  // TOOLTIP NO CONFLICT
+  // ===================
+
+  $.fn.tooltip.noConflict = function () {
+    $.fn.tooltip = old
+    return this
+  }
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: popover.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#popovers
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // POPOVER PUBLIC CLASS DEFINITION
+  // ===============================
+
+  var Popover = function (element, options) {
+    this.init('popover', element, options)
+  }
+
+  if (!$.fn.tooltip) throw new Error('Popover requires tooltip.js')
+
+  Popover.DEFAULTS = $.extend({} , $.fn.tooltip.Constructor.DEFAULTS, {
+    placement: 'right'
+  , trigger: 'click'
+  , content: ''
+  , template: '<div class="popover"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"></div></div>'
+  })
+
+
+  // NOTE: POPOVER EXTENDS tooltip.js
+  // ================================
+
+  Popover.prototype = $.extend({}, $.fn.tooltip.Constructor.prototype)
+
+  Popover.prototype.constructor = Popover
+
+  Popover.prototype.getDefaults = function () {
+    return Popover.DEFAULTS
+  }
+
+  Popover.prototype.setContent = function () {
+    var $tip    = this.tip()
+    var title   = this.getTitle()
+    var content = this.getContent()
+
+    $tip.find('.popover-title')[this.options.html ? 'html' : 'text'](title)
+    $tip.find('.popover-content')[this.options.html ? 'html' : 'text'](content)
+
+    $tip.removeClass('fade top bottom left right in')
+
+    // IE8 doesn't accept hiding via the `:empty` pseudo selector, we have to do
+    // this manually by checking the contents.
+    if (!$tip.find('.popover-title').html()) $tip.find('.popover-title').hide()
+  }
+
+  Popover.prototype.hasContent = function () {
+    return this.getTitle() || this.getContent()
+  }
+
+  Popover.prototype.getContent = function () {
+    var $e = this.$element
+    var o  = this.options
+
+    return $e.attr('data-content')
+      || (typeof o.content == 'function' ?
+            o.content.call($e[0]) :
+            o.content)
+  }
+
+  Popover.prototype.arrow = function () {
+    return this.$arrow = this.$arrow || this.tip().find('.arrow')
+  }
+
+  Popover.prototype.tip = function () {
+    if (!this.$tip) this.$tip = $(this.options.template)
+    return this.$tip
+  }
+
+
+  // POPOVER PLUGIN DEFINITION
+  // =========================
+
+  var old = $.fn.popover
+
+  $.fn.popover = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.popover')
+      var options = typeof option == 'object' && option
+
+      if (!data) $this.data('bs.popover', (data = new Popover(this, options)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.popover.Constructor = Popover
+
+
+  // POPOVER NO CONFLICT
+  // ===================
+
+  $.fn.popover.noConflict = function () {
+    $.fn.popover = old
+    return this
+  }
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: tab.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#tabs
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // TAB CLASS DEFINITION
+  // ====================
+
+  var Tab = function (element) {
+    this.element = $(element)
+  }
+
+  Tab.prototype.show = function () {
+    var $this    = this.element
+    var $ul      = $this.closest('ul:not(.dropdown-menu)')
+    var selector = $this.attr('data-target')
+
+    if (!selector) {
+      selector = $this.attr('href')
+      selector = selector && selector.replace(/.*(?=#[^\s]*$)/, '') //strip for ie7
+    }
+
+    if ($this.parent('li').hasClass('active')) return
+
+    var previous = $ul.find('.active:last a')[0]
+    var e        = $.Event('show.bs.tab', {
+      relatedTarget: previous
+    })
+
+    $this.trigger(e)
+
+    if (e.isDefaultPrevented()) return
+
+    var $target = $(selector)
+
+    this.activate($this.parent('li'), $ul)
+    this.activate($target, $target.parent(), function () {
+      $this.trigger({
+        type: 'shown.bs.tab'
+      , relatedTarget: previous
+      })
+    })
+  }
+
+  Tab.prototype.activate = function (element, container, callback) {
+    var $active    = container.find('> .active')
+    var transition = callback
+      && $.support.transition
+      && $active.hasClass('fade')
+
+    function next() {
+      $active
+        .removeClass('active')
+        .find('> .dropdown-menu > .active')
+        .removeClass('active')
+
+      element.addClass('active')
+
+      if (transition) {
+        element[0].offsetWidth // reflow for transition
+        element.addClass('in')
+      } else {
+        element.removeClass('fade')
+      }
+
+      if (element.parent('.dropdown-menu')) {
+        element.closest('li.dropdown').addClass('active')
+      }
+
+      callback && callback()
+    }
+
+    transition ?
+      $active
+        .one($.support.transition.end, next)
+        .emulateTransitionEnd(150) :
+      next()
+
+    $active.removeClass('in')
+  }
+
+
+  // TAB PLUGIN DEFINITION
+  // =====================
+
+  var old = $.fn.tab
+
+  $.fn.tab = function ( option ) {
+    return this.each(function () {
+      var $this = $(this)
+      var data  = $this.data('bs.tab')
+
+      if (!data) $this.data('bs.tab', (data = new Tab(this)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.tab.Constructor = Tab
+
+
+  // TAB NO CONFLICT
+  // ===============
+
+  $.fn.tab.noConflict = function () {
+    $.fn.tab = old
+    return this
+  }
+
+
+  // TAB DATA-API
+  // ============
+
+  $(document).on('click.bs.tab.data-api', '[data-toggle="tab"], [data-toggle="pill"]', function (e) {
+    e.preventDefault()
+    $(this).tab('show')
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: affix.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#affix
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // AFFIX CLASS DEFINITION
+  // ======================
+
+  var Affix = function (element, options) {
+    this.options = $.extend({}, Affix.DEFAULTS, options)
+    this.$window = $(window)
+      .on('scroll.bs.affix.data-api', $.proxy(this.checkPosition, this))
+      .on('click.bs.affix.data-api',  $.proxy(this.checkPositionWithEventLoop, this))
+
+    this.$element = $(element)
+    this.affixed  =
+    this.unpin    = null
+
+    this.checkPosition()
+  }
+
+  Affix.RESET = 'affix affix-top affix-bottom'
+
+  Affix.DEFAULTS = {
+    offset: 0
+  }
+
+  Affix.prototype.checkPositionWithEventLoop = function () {
+    setTimeout($.proxy(this.checkPosition, this), 1)
+  }
+
+  Affix.prototype.checkPosition = function () {
+    if (!this.$element.is(':visible')) return
+
+    var scrollHeight = $(document).height()
+    var scrollTop    = this.$window.scrollTop()
+    var position     = this.$element.offset()
+    var offset       = this.options.offset
+    var offsetTop    = offset.top
+    var offsetBottom = offset.bottom
+
+    if (typeof offset != 'object')         offsetBottom = offsetTop = offset
+    if (typeof offsetTop == 'function')    offsetTop    = offset.top()
+    if (typeof offsetBottom == 'function') offsetBottom = offset.bottom()
+
+    var affix = this.unpin   != null && (scrollTop + this.unpin <= position.top) ? false :
+                offsetBottom != null && (position.top + this.$element.height() >= scrollHeight - offsetBottom) ? 'bottom' :
+                offsetTop    != null && (scrollTop <= offsetTop) ? 'top' : false
+
+    if (this.affixed === affix) return
+    if (this.unpin) this.$element.css('top', '')
+
+    this.affixed = affix
+    this.unpin   = affix == 'bottom' ? position.top - scrollTop : null
+
+    this.$element.removeClass(Affix.RESET).addClass('affix' + (affix ? '-' + affix : ''))
+
+    if (affix == 'bottom') {
+      this.$element.offset({ top: document.body.offsetHeight - offsetBottom - this.$element.height() })
+    }
+  }
+
+
+  // AFFIX PLUGIN DEFINITION
+  // =======================
+
+  var old = $.fn.affix
+
+  $.fn.affix = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.affix')
+      var options = typeof option == 'object' && option
+
+      if (!data) $this.data('bs.affix', (data = new Affix(this, options)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.affix.Constructor = Affix
+
+
+  // AFFIX NO CONFLICT
+  // =================
+
+  $.fn.affix.noConflict = function () {
+    $.fn.affix = old
+    return this
+  }
+
+
+  // AFFIX DATA-API
+  // ==============
+
+  $(window).on('load', function () {
+    $('[data-spy="affix"]').each(function () {
+      var $spy = $(this)
+      var data = $spy.data()
+
+      data.offset = data.offset || {}
+
+      if (data.offsetBottom) data.offset.bottom = data.offsetBottom
+      if (data.offsetTop)    data.offset.top    = data.offsetTop
+
+      $spy.affix(data)
+    })
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: collapse.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#collapse
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // COLLAPSE PUBLIC CLASS DEFINITION
+  // ================================
+
+  var Collapse = function (element, options) {
+    this.$element      = $(element)
+    this.options       = $.extend({}, Collapse.DEFAULTS, options)
+    this.transitioning = null
+
+    if (this.options.parent) this.$parent = $(this.options.parent)
+    if (this.options.toggle) this.toggle()
+  }
+
+  Collapse.DEFAULTS = {
+    toggle: true
+  }
+
+  Collapse.prototype.dimension = function () {
+    var hasWidth = this.$element.hasClass('width')
+    return hasWidth ? 'width' : 'height'
+  }
+
+  Collapse.prototype.show = function () {
+    if (this.transitioning || this.$element.hasClass('in')) return
+
+    var startEvent = $.Event('show.bs.collapse')
+    this.$element.trigger(startEvent)
+    if (startEvent.isDefaultPrevented()) return
+
+    var actives = this.$parent && this.$parent.find('> .panel > .in')
+
+    if (actives && actives.length) {
+      var hasData = actives.data('bs.collapse')
+      if (hasData && hasData.transitioning) return
+      actives.collapse('hide')
+      hasData || actives.data('bs.collapse', null)
+    }
+
+    var dimension = this.dimension()
+
+    this.$element
+      .removeClass('collapse')
+      .addClass('collapsing')
+      [dimension](0)
+
+    this.transitioning = 1
+
+    var complete = function () {
+      this.$element
+        .removeClass('collapsing')
+        .addClass('in')
+        [dimension]('auto')
+      this.transitioning = 0
+      this.$element.trigger('shown.bs.collapse')
+    }
+
+    if (!$.support.transition) return complete.call(this)
+
+    var scrollSize = $.camelCase(['scroll', dimension].join('-'))
+
+    this.$element
+      .one($.support.transition.end, $.proxy(complete, this))
+      .emulateTransitionEnd(350)
+      [dimension](this.$element[0][scrollSize])
+  }
+
+  Collapse.prototype.hide = function () {
+    if (this.transitioning || !this.$element.hasClass('in')) return
+
+    var startEvent = $.Event('hide.bs.collapse')
+    this.$element.trigger(startEvent)
+    if (startEvent.isDefaultPrevented()) return
+
+    var dimension = this.dimension()
+
+    this.$element
+      [dimension](this.$element[dimension]())
+      [0].offsetHeight
+
+    this.$element
+      .addClass('collapsing')
+      .removeClass('collapse')
+      .removeClass('in')
+
+    this.transitioning = 1
+
+    var complete = function () {
+      this.transitioning = 0
+      this.$element
+        .trigger('hidden.bs.collapse')
+        .removeClass('collapsing')
+        .addClass('collapse')
+    }
+
+    if (!$.support.transition) return complete.call(this)
+
+    this.$element
+      [dimension](0)
+      .one($.support.transition.end, $.proxy(complete, this))
+      .emulateTransitionEnd(350)
+  }
+
+  Collapse.prototype.toggle = function () {
+    this[this.$element.hasClass('in') ? 'hide' : 'show']()
+  }
+
+
+  // COLLAPSE PLUGIN DEFINITION
+  // ==========================
+
+  var old = $.fn.collapse
+
+  $.fn.collapse = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.collapse')
+      var options = $.extend({}, Collapse.DEFAULTS, $this.data(), typeof option == 'object' && option)
+
+      if (!data) $this.data('bs.collapse', (data = new Collapse(this, options)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.collapse.Constructor = Collapse
+
+
+  // COLLAPSE NO CONFLICT
+  // ====================
+
+  $.fn.collapse.noConflict = function () {
+    $.fn.collapse = old
+    return this
+  }
+
+
+  // COLLAPSE DATA-API
+  // =================
+
+  $(document).on('click.bs.collapse.data-api', '[data-toggle=collapse]', function (e) {
+    var $this   = $(this), href
+    var target  = $this.attr('data-target')
+        || e.preventDefault()
+        || (href = $this.attr('href')) && href.replace(/.*(?=#[^\s]+$)/, '') //strip for ie7
+    var $target = $(target)
+    var data    = $target.data('bs.collapse')
+    var option  = data ? 'toggle' : $this.data()
+    var parent  = $this.attr('data-parent')
+    var $parent = parent && $(parent)
+
+    if (!data || !data.transitioning) {
+      if ($parent) $parent.find('[data-toggle=collapse][data-parent="' + parent + '"]').not($this).addClass('collapsed')
+      $this[$target.hasClass('in') ? 'addClass' : 'removeClass']('collapsed')
+    }
+
+    $target.collapse(option)
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: scrollspy.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#scrollspy
+ * ========================================================================
+ * Copyright 2012 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // SCROLLSPY CLASS DEFINITION
+  // ==========================
+
+  function ScrollSpy(element, options) {
+    var href
+    var process  = $.proxy(this.process, this)
+
+    this.$element       = $(element).is('body') ? $(window) : $(element)
+    this.$body          = $('body')
+    this.$scrollElement = this.$element.on('scroll.bs.scroll-spy.data-api', process)
+    this.options        = $.extend({}, ScrollSpy.DEFAULTS, options)
+    this.selector       = (this.options.target
+      || ((href = $(element).attr('href')) && href.replace(/.*(?=#[^\s]+$)/, '')) //strip for ie7
+      || '') + ' .nav li > a'
+    this.offsets        = $([])
+    this.targets        = $([])
+    this.activeTarget   = null
+
+    this.refresh()
+    this.process()
+  }
+
+  ScrollSpy.DEFAULTS = {
+    offset: 10
+  }
+
+  ScrollSpy.prototype.refresh = function () {
+    var offsetMethod = this.$element[0] == window ? 'offset' : 'position'
+
+    this.offsets = $([])
+    this.targets = $([])
+
+    var self     = this
+    var $targets = this.$body
+      .find(this.selector)
+      .map(function () {
+        var $el   = $(this)
+        var href  = $el.data('target') || $el.attr('href')
+        var $href = /^#\w/.test(href) && $(href)
+
+        return ($href
+          && $href.length
+          && [[ $href[offsetMethod]().top + (!$.isWindow(self.$scrollElement.get(0)) && self.$scrollElement.scrollTop()), href ]]) || null
+      })
+      .sort(function (a, b) { return a[0] - b[0] })
+      .each(function () {
+        self.offsets.push(this[0])
+        self.targets.push(this[1])
+      })
+  }
+
+  ScrollSpy.prototype.process = function () {
+    var scrollTop    = this.$scrollElement.scrollTop() + this.options.offset
+    var scrollHeight = this.$scrollElement[0].scrollHeight || this.$body[0].scrollHeight
+    var maxScroll    = scrollHeight - this.$scrollElement.height()
+    var offsets      = this.offsets
+    var targets      = this.targets
+    var activeTarget = this.activeTarget
+    var i
+
+    if (scrollTop >= maxScroll) {
+      return activeTarget != (i = targets.last()[0]) && this.activate(i)
+    }
+
+    for (i = offsets.length; i--;) {
+      activeTarget != targets[i]
+        && scrollTop >= offsets[i]
+        && (!offsets[i + 1] || scrollTop <= offsets[i + 1])
+        && this.activate( targets[i] )
+    }
+  }
+
+  ScrollSpy.prototype.activate = function (target) {
+    this.activeTarget = target
+
+    $(this.selector)
+      .parents('.active')
+      .removeClass('active')
+
+    var selector = this.selector
+      + '[data-target="' + target + '"],'
+      + this.selector + '[href="' + target + '"]'
+
+    var active = $(selector)
+      .parents('li')
+      .addClass('active')
+
+    if (active.parent('.dropdown-menu').length)  {
+      active = active
+        .closest('li.dropdown')
+        .addClass('active')
+    }
+
+    active.trigger('activate')
+  }
+
+
+  // SCROLLSPY PLUGIN DEFINITION
+  // ===========================
+
+  var old = $.fn.scrollspy
+
+  $.fn.scrollspy = function (option) {
+    return this.each(function () {
+      var $this   = $(this)
+      var data    = $this.data('bs.scrollspy')
+      var options = typeof option == 'object' && option
+
+      if (!data) $this.data('bs.scrollspy', (data = new ScrollSpy(this, options)))
+      if (typeof option == 'string') data[option]()
+    })
+  }
+
+  $.fn.scrollspy.Constructor = ScrollSpy
+
+
+  // SCROLLSPY NO CONFLICT
+  // =====================
+
+  $.fn.scrollspy.noConflict = function () {
+    $.fn.scrollspy = old
+    return this
+  }
+
+
+  // SCROLLSPY DATA-API
+  // ==================
+
+  $(window).on('load', function () {
+    $('[data-spy="scroll"]').each(function () {
+      var $spy = $(this)
+      $spy.scrollspy($spy.data())
+    })
+  })
+
+}(window.jQuery);
+
+/* ========================================================================
+ * Bootstrap: transition.js v3.0.0
+ * http://twbs.github.com/bootstrap/javascript.html#transitions
+ * ========================================================================
+ * Copyright 2013 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ======================================================================== */
+
+
++function ($) { 
+
+  // CSS TRANSITION SUPPORT (Shoutout: http://www.modernizr.com/)
+  // ============================================================
+
+  function transitionEnd() {
+    var el = document.createElement('bootstrap')
+
+    var transEndEventNames = {
+      'WebkitTransition' : 'webkitTransitionEnd'
+    , 'MozTransition'    : 'transitionend'
+    , 'OTransition'      : 'oTransitionEnd otransitionend'
+    , 'transition'       : 'transitionend'
+    }
+
+    for (var name in transEndEventNames) {
+      if (el.style[name] !== undefined) {
+        return { end: transEndEventNames[name] }
+      }
+    }
+  }
+
+  // http://blog.alexmaccaw.com/css-transitions
+  $.fn.emulateTransitionEnd = function (duration) {
+    var called = false, $el = this
+    $(this).one($.support.transition.end, function () { called = true })
+    var callback = function () { if (!called) $($el).trigger($.support.transition.end) }
+    setTimeout(callback, duration)
+    return this
+  }
+
+  $(function () {
+    $.support.transition = transitionEnd()
+  })
+
+}(window.jQuery);
+
+define("bootstrap", (function (global) {
+    return function () {
+        var ret, fn;
+        return ret || global.bootstrap;
+    };
+}(this)));
+
+/*!
+ * backbone.layoutmanager.js v0.6.5
+ * Copyright 2012, Tim Branyen (@tbranyen)
+ * backbone.layoutmanager.js may be freely distributed under the MIT license.
+ */
+(function(window) {
+
+
+
+// Used to keep track of all LayoutManager key names.
+var keys;
+
+// Alias the libraries from the global object.
+var Backbone = window.Backbone;
+var _ = window._;
+var $ = window.$;
+
+// Store references to original View functions.
+var _configure = Backbone.View.prototype._configure;
+var render = Backbone.View.prototype.render;
+
+// A LayoutManager is simply a Backbone.View with some sugar.
+var LayoutManager = Backbone.View.extend({
+  // This named function allows for significantly easier debugging.
+  constructor: function Layout(options) {
+    // Options should always a valid object.
+    options = options || {};
+
+    // Give this View superpowers.
+    LayoutManager.setupView(this, options);
+
+    // Have Backbone set up the rest of this View.
+    Backbone.View.call(this, options);
+  },
+
+  // Swap the current layout to  new layout.
+  swapLayout: function(newLayout) {
+    // Set Views to be a hybrid of original and new layout.
+    newLayout.views = _.defaults({}, this.views, newLayout.views);
+
+    // Re-use the same layout DOM element.
+    newLayout.setElement(this.el);
+
+    // Allow for chainability.
+    return newLayout;
+  },
+
+  // Shorthand to root.view function with append flag.
+  insertView: function(selector, view) {
+    // If a selector was passed, forward that onto setView.
+    if (view) {
+      return this.setView(selector, view, true);
+    }
+
+    // Omitting a selector will place the View directly into the parent.
+    return this.setView(selector, true);
+  },
+
+  // Works like insertView, except allows you to bulk insert via setViews.
+  insertViews: function(views) {
+    // Ensure each view is wrapped in an array.
+    _.each(views, function(view, selector) {
+      views[selector] = [].concat(view);
+    });
+
+    return this.setViews(views);
+  },
+
+  // Will return a single view that matches the filter function.
+  getView: function(fn) {
+    return this.getViews(fn).first().value();
+  },
+
+  // Provide a filter function to get a flattened array of all the subviews.
+  // If the filter function is omitted it will return all subviews.
+  getViews: function(fn) {
+    // Flatten all views.
+    var views = _.chain(this.views).map(function(view) {
+      return [].concat(view);
+    }, this).flatten().value();
+
+    // Return a wrapped function to allow for easier chaining.
+    return _.chain(_.filter(views, fn ? fn : _.identity));
+  },
+
+  // This takes in a partial name and view instance and assigns them to
+  // the internal collection of views.  If a view is not a LayoutManager
+  // instance, then mix in the LayoutManager prototype.  This ensures
+  // all Views can be used successfully.
+  //
+  // Must definitely wrap any render method passed in or defaults to a
+  // typical render function `return layout(this).render()`.
+  setView: function(name, view, append) {
+    var partials, options;
+    var root = this;
+
+    // If no name was passed, use an empty string and shift all arguments.
+    if (!_.isString(name)) {
+      append = view;
+      view = name;
+      name = "";
+    }
+
+    // If the parent View's object, doesn't exist... create it.
+    this.views = this.views || {};
+
+    // Ensure remove is called when swapping View's.
+    if (!append && this.views[name]) {
+      // If the views are an array, iterate and remove each individually.
+      if (_.isArray(this.views[name])) {
+        _.each(this.views[name], function(view) {
+          view.remove();
+        });
+      // Otherwise it's a single view and can safely call remove.
+      } else {
+        this.views[name].remove();
+      }
+    }
+
+    // Instance overrides take precedence, fallback to prototype options.
+    options = view._options();
+
+    // Set up the View, if it's not already managed.
+    if (!view.__manager__) {
+      LayoutManager.setupView(view, options);
+    }
+
+    // Custom template render function.
+    view.render = function(done) {
+      var viewDeferred = options.deferred();
+      var manager = view.__manager__;
+
+      // Ensure the latest deferred is assigned.
+      manager.viewDeferred = viewDeferred;
+      
+      // Break this callback out so that its not duplicated inside the 
+      // following safety try/catch.
+      function renderCallback() {
+        // List items should not be re-added, unless they have `keep: true`
+        // set.
+        if ((!append || view.keep) || !manager.hasRendered) {
+          options.partial(root.el, name, view.el, append);
+        }
+
+        // Ensure events are always correctly bound after rendering.
+        view.delegateEvents();
+
+        // If the View has a managed handler, resolve and remove it.
+        if (manager.handler) {
+          // Resolve the View's render handler deferred.
+          manager.handler.resolveWith(view, [view.el]);
+
+          // Remove the handler once it has resolved.
+          delete manager.handler;
+        }
+
+        // When a view has been resolved, ensure that it is correctly updated
+        // and that any done callbacks are triggered.
+        viewDeferred.resolveWith(view, [view.el]);
+
+        // Only call the done function if a callback was provided.
+        if (_.isFunction(done)) {
+          done.call(view, view.el);
+        }
+      }
+
+      // Remove subViews without the `keep` flag set to `true`.
+      view._removeView();
+
+      // Call the original render method.
+      LayoutManager.prototype.render.call(view).then(renderCallback);
+
+      // Return the promise for chainability.
+      return viewDeferred.promise();
+    };
+
+    // Add reference to the parentView.
+    view.__manager__.parent = root;
+    // Add reference to the placement selector used.
+    view.__manager__.selector = name;
+
+    // Special logic for appending items. List items are represented as an
+    // array.
+    if (append) {
+      // Start with an array if none exists.
+      partials = this.views[name] = this.views[name] || [];
+      
+      if (!_.isArray(this.views[name])) {
+        // Ensure this.views[name] is an array.
+        partials = this.views[name] = [this.views[name]];
+      }
+
+      // Ensure the View is not already added to the list.  If it is, bail out
+      // early.
+      if (_.indexOf(partials, view) > -1) {
+        return view;
+      }
+
+      // Add the view to the list of partials.
+      partials.push(view);
+
+      // Put the view into `append` mode.
+      view.__manager__.append = true;
+
+      return view;
+    }
+
+    // Assign to main views object and return for chainability.
+    return this.views[name] = view;
+  },
+
+  // Allows the setting of multiple views instead of a single view.
+  setViews: function(views) {
+    // Iterate over all the views and use the View's view method to assign.
+    _.each(views, function(view, name) {
+      // If the view is an array put all views into insert mode.
+      if (_.isArray(view)) {
+        return _.each(view, function(view) {
+          this.insertView(name, view);
+        }, this);
+      }
+
+      // Assign each view using the view function.
+      this.setView(name, view);
+    }, this);
+
+    // Allow for chaining
+    return this;
+  },
+
+  // By default this should find all nested views and render them into
+  // the this.el and call done once all of them have successfully been
+  // resolved.
+  //
+  // This function returns a promise that can be chained to determine
+  // once all subviews and main view have been rendered into the view.el.
+  render: function(done) {
+    var root = this;
+    var options = this._options();
+    var viewDeferred = options.deferred();
+
+    // Ensure duplicate renders don't override.
+    if (this.__manager__.renderDeferred) {
+      // Set the most recent done callback.
+      this.__manager__.callback = done;
+
+      // Return the deferred.
+      return this.__manager__.renderDeferred;
+    }
+    
+    // Wait until this View has rendered before dealing with nested Views.
+    this._render(LayoutManager._viewRender).fetch.then(function() {
+      // Disable the ability for any new sub-views to be added.
+      root.__manager__.renderDeferred = viewDeferred;
+
+      // Create a list of promises to wait on until rendering is done. Since
+      // this method will run on all children as well, its sufficient for a
+      // full hierarchical. 
+      var promises = _.map(root.views, function(view) {
+        // Hoist deferred var, used later on...
+        var def;
+
+        // Ensure views are rendered in sequence
+        function seqRender(views, done) {
+          // Once all views have been rendered invoke the sequence render
+          // callback.
+          if (!views.length) {
+            return done();
+          }
+
+          // Get each view in order, grab the first one off the stack.
+          var view = views.shift();
+
+          // Render the View and once complete call the next view.
+          view.render(function() {
+            // Invoke the recursive sequence render function with the
+            // remaining views.
+            seqRender(views, done);
+          });
+        }
+
+        // If rendering a list out, ensure they happen in a serial order.
+        if (_.isArray(view)) {
+          // A singular deferred that represents all the items.
+          def = options.deferred();
+
+          seqRender(_.clone(view), function() {
+            def.resolve();
+          });
+
+          return def.promise();
+        }
+
+        // Only return the fetch deferred, resolve the main deferred after
+        // the element has been attached to it's parent.
+        return view.render();
+      });
+
+      // Once all subViews have been rendered, resolve this View's deferred.
+      options.when(promises).then(function() {
+        viewDeferred.resolveWith(root, [root.el]);
+      });
+    });
+
+    // Return a promise that resolves once all immediate subViews have
+    // rendered.
+    return viewDeferred.then(function() {
+      // Only call the done function if a callback was provided.
+      if (_.isFunction(done)) {
+        done.call(root, root.el);
+      }
+
+      if (root.__manager__.handler) {
+        root.__manager__.handler.resolveWith(root, [root.el]);
+
+        // Remove the handler, so it's never accidentally referenced.
+        delete root.__manager__.handler;
+      }
+
+      // If the render was called twice, there is a possibility that the
+      // callback style was used twice.  This will ensure the latest callback
+      // is also triggered.
+      if (_.isFunction(root.__manager__.callback)) {
+        root.__manager__.callback.call(root, root.el);
+
+        // Remove the most recent callback.
+        delete root.__manager__.callback;
+      }
+
+      // Remove the rendered deferred.
+      delete root.__manager__.renderDeferred;
+    });
+  },
+
+  // Ensure the cleanup function is called whenever remove is called.
+  remove: function() {
+    LayoutManager.cleanViews(this);
+
+    // Call the original remove function.
+    return this._remove.apply(this, arguments);
+  },
+
+  // Merge instance and global options.
+  _options: function() {
+    // Instance overrides take precedence, fallback to prototype options.
+    return _.extend({}, this, LayoutManager.prototype.options, this.options);
+  }
+},
+{
+  // Clearable cache.
+  _cache: {},
+
+  // Creates a deferred and returns a function to call when finished.
+  _makeAsync: function(options, done) {
+    var handler = options.deferred();
+
+    // Used to handle asynchronous renders.
+    handler.async = function() {
+      handler._isAsync = true;
+
+      return done;
+    };
+
+    return handler;
+  },
+
+  // This gets passed to all _render methods.
+  _viewRender: function(root) {
+    var url, contents, handler;
+    var options = root._options();
+
+    // Once the template is successfully fetched, use its contents to
+    // proceed.  Context argument is first, since it is bound for
+    // partial application reasons.
+    function done(context, contents) {
+      // Ensure the cache is up-to-date.
+      LayoutManager.cache(url, contents);
+
+      // Render the View into the el property.
+      if (contents) {
+        options.html(root.el, options.render(contents, context));
+      }
+
+      // Resolve only the fetch (used internally) deferred with the View
+      // element.
+      handler.fetch.resolveWith(root, [root.el]);
+    }
+
+    return {
+      // This render function is what gets called inside of the View render,
+      // when manage(this).render is called.  Returns a promise that can be
+      // used to know when the element has been rendered into its parent.
+      render: function(context) {
+        var manager = root.__manager__;
+        var template = root.template || options.template;
+
+        if (root.serialize) {
+          options.serialize = root.serialize;
+        }
+
+        // Seek out serialize method and use that object.
+        if (!context && _.isFunction(options.serialize)) {
+          context = options.serialize.call(root);
+        // If serialize is an object, just use that.
+        } else if (!context && _.isObject(options.serialize)) {
+          context = options.serialize;
+        }
+
+        // Create an asynchronous handler.
+        handler = LayoutManager._makeAsync(options, _.bind(done, root,
+          context));
+
+        // Make a new deferred purely for the fetch function.
+        handler.fetch = options.deferred();
+
+        // Assign the handler internally to be resolved once its inside the
+        // parent element.
+        manager.handler = handler;
+
+        // Set the url to the prefix + the view's template property.
+        if (_.isString(template)) {
+          url = manager.prefix + template;
+        }
+
+        // Check if contents are already cached.
+        if (contents = LayoutManager.cache(url)) {
+          done(context, contents, url);
+
+          return handler;
+        }
+
+        // Fetch layout and template contents.
+        if (_.isString(template)) {
+          contents = options.fetch.call(handler, manager.prefix + template);
+        // If its not a string just pass the object/function/whatever.
+        } else if (template != null) {
+          contents = options.fetch.call(handler, template);
+        }
+
+        // If the function was synchronous, continue execution.
+        if (!handler._isAsync) {
+          done(context, contents);
+        }
+
+        return handler;
+      }
+    };
+  },
+
+  // Accept either a single view or an array of views to clean of all DOM
+  // events internal model and collection references and all Backbone.Events.
+  cleanViews: function(views) {
+    // Clear out all existing views.
+    _.each([].concat(views), function(view) {
+      // Remove all custom events attached to this View.
+      view.unbind();
+
+      // Ensure all nested views are cleaned as well.
+      if (view.views) {
+        _.each(view.views, function(view) {
+          LayoutManager.cleanViews(view);
+        });
+      }
+
+      // If a custom cleanup method was provided on the view, call it after
+      // the initial cleanup is done
+      if (_.isFunction(view.cleanup)) {
+        view.cleanup.call(view);
+      }
+    });
+  },
+
+  // Cache templates into LayoutManager._cache.
+  cache: function(path, contents) {
+    // If template path is found in the cache, return the contents.
+    if (path in this._cache) {
+      return this._cache[path];
+    // Ensure path and contents aren't undefined.
+    } else if (path != null && contents != null) {
+      return this._cache[path] = contents;
+    }
+
+    // If the template is not in the cache, return undefined.
+  },
+
+  // This static method allows for global configuration of LayoutManager.
+  configure: function(opts) {
+    _.extend(LayoutManager.prototype.options, opts);
+
+    // Allow LayoutManager to manage Backbone.View.prototype.
+    if (opts.manage) {
+      Backbone.View.prototype.manage = true;
+    }
+  },
+
+  // Configure a View to work with the LayoutManager plugin.
+  setupView: function(view, options) {
+    var views, viewOptions;
+    var proto = Backbone.LayoutManager.prototype;
+    var viewOverrides = _.pick(view, keys);
+
+    // If the View has already been setup, no need to do it again.
+    if (view.__manager__) {
+      return;
+    }
+
+    // Ensure necessary properties are set.
+    _.defaults(view, {
+      // Ensure a view always has a views object.
+      views: {},
+
+      // Internal state object used to store whether or not a View has been
+      // taken over by layout manager and if it has been rendered into the DOM.
+      __manager__: {},
+
+      // Add options into the prototype.
+      _options: LayoutManager.prototype._options,
+
+      // Add the ability to remove all Views.
+      _removeView: LayoutManager._removeView
+    });
+
+    // Set the prefix for a layout.
+    if (view instanceof Backbone.Layout) {
+      view.__manager__.prefix = view._options().paths.layout || "";
+    // Set the prefix for a template.
+    } else {
+      view.__manager__.prefix = view._options().paths.template || "";
+    }
+
+    // Extend the options with the prototype and passed options.
+    options = view.options = _.defaults(options || {}, view.options,
+      proto.options);
+
+    // Ensure view events are properly copied over.
+    viewOptions = _.pick(options, ["events"].concat(_.values(options.events)));
+    _.extend(view, viewOptions);
+
+    // If the View still has the Backbone.View#render method, remove it.  Don't
+    // want it accidentally overriding the LM render.
+    delete viewOverrides.render;
+
+    // Pick out the specific properties that can be dynamically added at
+    // runtime and ensure they are available on the view object.
+    _.extend(options, viewOverrides);
+
+    // By default the original Remove function is the Backbone.View one.
+    view._remove = Backbone.View.prototype.remove;
+
+    // Always use this render function when using LayoutManager.
+    view._render = function(manage) {
+      var renderDeferred;
+      // Cache these properties.
+      var beforeRender = this._options().beforeRender;
+      var afterRender = this._options().afterRender;
+
+      // Ensure all subViews are properly scrubbed.
+      this._removeView();
+
+      // If a beforeRender function is defined, call it.
+      if (_.isFunction(beforeRender)) {
+        beforeRender.call(this, this);
+      }
+
+      // Always emit a beforeRender event.
+      this.trigger("beforeRender", this);
+
+      // Render!
+      renderDeferred = manage(this).render();
+
+      // Once rendering is complete...
+      renderDeferred.then(function() {
+        // Keep the view consistent between callbacks and deferreds.
+        var view = this;
+        // Shorthand the manager.
+        var manager = view.__manager__;
+        // Shorthand the View's parent.
+        var parent = manager.parent;
+        // This can be called immediately if the conditions allow, or it will
+        // be deferred until a parent has finished rendering.
+        var done = function() {
+          // Ensure events are always correctly bound after rendering.
+          view.delegateEvents();
+
+          // Set the view hasRendered.
+          view.__manager__.hasRendered = true;
+
+          // If an afterRender function is defined, call it.
+          if (_.isFunction(afterRender)) {
+            afterRender.call(view, view);
+          }
+
+          // Always emit an afterRender event.
+          view.trigger("afterRender", view);
+        };
+        // This function recursively loops through Views to find
+        // the most top level parent.
+        var findRootParent = function(view) {
+          var manager = view.__manager__;
+
+          // If a parent exists, recurse.
+          if (manager.parent && !manager.hasRendered) {
+            return findRootParent(manager.parent);
+          }
+
+          // This is the most root parent.
+          return view;
+        };
+
+        // If no parent exists, immediately call the done callback.
+        if (!parent) {
+          return done.call(view);
+        }
+
+        // If this view has already rendered, simply call the callback.
+        if (parent.__manager__.hasRendered) {
+          return options.when([manager.viewDeferred, parent.__manager__.viewDeferred]).then(function() {
+            done.call(view);
+          });
+        }
+
+        parent = findRootParent(view);
+
+        // Once the parent has finished rendering, trickle down and
+        // call sub-view afterRenders.
+        parent.on("afterRender", function() {
+          // Ensure its properly unbound immediately.
+          parent.off(null, null, view);
+
+          // Call the done callback.
+          done.call(view);
+        }, view);
+      });
+      return renderDeferred;
+    };
+
+    // Ensure the render is always set correctly.
+    view.render = LayoutManager.prototype.render;
+
+    // If the user provided their own remove override, use that instead of the
+    // default.
+    if (view.remove !== proto.remove) {
+      view._remove = view.remove;
+      view.remove = proto.remove;
+    }
+    
+    // Normalize views to exist on either instance or options, default to
+    // options.
+    views = options.views || view.views;
+
+    // Set the internal views, only if selectors have been provided.
+    if (_.keys(views).length) {
+      view.setViews(views);
+    }
+
+    // Ensure the template is mapped over.
+    if (view.template) {
+      options.template = view.template;
+
+      // Remove it from the instance.
+      delete view.template;
+    }
+  },
+
+  // Remove all subViews.
+  _removeView: function(root) {
+    // Allow removeView to be called on instances.
+    root = root || this;
+
+    // Iterate over all of the view's subViews.
+    root.getViews().each(function(view) {
+      // Shorthand the manager for easier access.
+      var manager = view.__manager__;
+      // Test for keep.
+      var keep = _.isBoolean(view.keep) ? view.keep : view.options.keep;
+
+      // Only remove views that do not have `keep` attribute set.
+      if (!keep && manager.append === true && manager.hasRendered) {
+        // Remove the View completely.
+        view.remove();
+
+        // If this is an array of items remove items that are not marked to
+        // keep.
+        if (_.isArray(manager.parent.views[manager.selector])) {
+          // Remove directly from the Array reference.
+          return manager.parent.getView(function(view, i) {
+            // If the selectors match, splice off this View.
+            if (view.__manager__.selector === manager.selector) {
+              manager.parent.views[manager.selector].splice(i, 1);
+            }
+          });
+        }
+
+        // Otherwise delete the parent selector.
+        delete manager.parent[manager.selector];
+      }
+    });
+  }
+});
+
+// Ensure all Views always have access to get/set/insert(View/Views).
+_.each(["get", "set", "insert"], function(method) {
+  var backboneProto = Backbone.View.prototype;
+  var layoutProto = LayoutManager.prototype;
+
+  // Attach the singular form.
+  backboneProto[method + "View"] = layoutProto[method + "View"];
+
+  // Attach the plural form.
+  backboneProto[method + "Views"] = layoutProto[method + "Views"];
+});
+
+// Convenience assignment to make creating Layout's slightly shorter.
+Backbone.Layout = Backbone.LayoutManager = LayoutManager;
+// A LayoutView is just a Backbone.View with manage set to true.
+Backbone.LayoutView = Backbone.View.extend({
+  manage: true
+});
+
+// Override _configure to provide extra functionality that is necessary in
+// order for the render function reference to be bound during initialize.
+Backbone.View.prototype._configure = function() {
+  // Run the original _configure.
+  var retVal = _configure.apply(this, arguments);
+
+  // If manage is set, do it!
+  if (this.manage) {
+    // Set up this View.
+    LayoutManager.setupView(this);
+  }
+
+  // Act like nothing happened.
+  return retVal;
+};
+
+// Default configuration options; designed to be overriden.
+LayoutManager.prototype.options = {
+  // Layout and template properties can be assigned here to prefix
+  // template/layout names.
+  paths: {},
+
+  // Can be used to supply a different deferred implementation.
+  deferred: function() {
+    return $.Deferred();
+  },
+
+  // Fetch is passed a path and is expected to return template contents as a
+  // function or string.
+  fetch: function(path) {
+    return _.template($(path).html());
+  },
+
+  // This is really the only way you will want to partially apply a view into
+  // a layout.  Its entirely possible you'll want to do it differently, so
+  // this method is available to change.
+  partial: function(root, name, el, append) {
+    // If no selector is specified, assume the parent should be added to.
+    var $root = name ? $(root).find(name) : $(root);
+
+    // If no root found, return false.
+    if (!$root.length) {
+      return false;
+    }
+
+    // Use the append method if append argument is true.
+    this[append ? "append" : "html"]($root, el);
+
+    // If successfully added, return true.
+    return true;
+  },
+
+  // Override this with a custom HTML method, passed a root element and an
+  // element to replace the innerHTML with.
+  html: function(root, el) {
+    $(root).html(el);
+  },
+
+  // Very similar to HTML except this one will appendChild.
+  append: function(root, el) {
+    $(root).append(el);
+  },
+
+  // Return a deferred for when all promises resolve/reject.
+  when: function(promises) {
+    return $.when.apply(null, promises);
+  },
+
+  // By default, render using underscore's templating.
+  render: function(template, context) {
+    return template(context);
+  }
+};
+
+// Maintain a list of the keys at define time.
+keys = _.keys(LayoutManager.prototype.options);
+
+})(this);
+
+define("plugins/backbone.layoutmanager", function(){});
+
+/*!
+ * jQuery Cookie Plugin v1.3
+ * https://github.com/carhartl/jquery-cookie
+ *
+ * Copyright 2011, Klaus Hartl
+ * Dual licensed under the MIT or GPL Version 2 licenses.
+ * http://www.opensource.org/licenses/mit-license.php
+ * http://www.opensource.org/licenses/GPL-2.0
+ */
+(function ($, document, undefined) {
+
+	var pluses = /\+/g;
+
+	function raw(s) {
+		return s;
+	}
+
+	function decoded(s) {
+		return decodeURIComponent(s.replace(pluses, ' '));
+	}
+
+	var config = $.cookie = function (key, value, options) {
+
+		// write
+		if (value !== undefined) {
+			options = $.extend({}, config.defaults, options);
+
+			if (value === null) {
+				options.expires = -1;
+			}
+
+			if (typeof options.expires === 'number') {
+				var days = options.expires, t = options.expires = new Date();
+				t.setDate(t.getDate() + days);
+			}
+
+			value = config.json ? JSON.stringify(value) : String(value);
+
+			return (document.cookie = [
+				encodeURIComponent(key), '=', config.raw ? value : encodeURIComponent(value),
+				options.expires ? '; expires=' + options.expires.toUTCString() : '', // use expires attribute, max-age is not supported by IE
+				options.path    ? '; path=' + options.path : '',
+				options.domain  ? '; domain=' + options.domain : '',
+				options.secure  ? '; secure' : ''
+			].join(''));
+		}
+
+		// read
+		var decode = config.raw ? raw : decoded;
+		var cookies = document.cookie.split('; ');
+		for (var i = 0, l = cookies.length; i < l; i++) {
+			var parts = cookies[i].split('=');
+			if (decode(parts.shift()) === key) {
+				var cookie = decode(parts.join('='));
+				return config.json ? JSON.parse(cookie) : cookie;
+			}
+		}
+
+		return null;
+	};
+
+	config.defaults = {};
+
+	$.removeCookie = function (key, options) {
+		if ($.cookie(key) !== null) {
+			$.cookie(key, null, options);
+			return true;
+		}
+		return false;
+	};
+
+})(jQuery, document);
+define("plugins/jquery.cookie", function(){});
+
+define('app',[
+		// Libraries.
+		"JSON", "jquery", "lodash", "backbone", "handlebars","d3", "bootstrap",
+
+		// Plugins.
+		"plugins/backbone.layoutmanager", "plugins/jquery.cookie"
+	],
+
+	function(JSON, $, _, Backbone, Handlebars) {
+
+		// Provide a global location to place configuration settings and module
+		// creation.
+		var app = {
+			// The root path to run the application.
+			root: "/"
+		};
+
+		// Localize or create a new JavaScript Template object.
+		var JST = window.JST = window.JST || {};
+
+		// Configure LayoutManager with Backbone Boilerplate defaults.
+		Backbone.LayoutManager.configure({
+			// Allow LayoutManager to augment Backbone.View.prototype.
+			manage: true,
+
+			paths: {
+				layout: "app/templates/layout/",
+				template: "app/templates/"
+			},
+
+			fetch: function(path) {
+				var done;
+
+				// Add the html extension.
+				path = path + ".html";
+
+				// If the template has not been loaded yet, then load.
+				if (!JST[path]) {
+					done = this.async();
+					return $.ajax({
+						url: app.root + path
+					}).then(function(contents) {
+						JST[path] = Handlebars.compile(contents);
+						JST[path].__compiled__ = true;
+
+						done(JST[path]);
+					});
+				}
+
+				// If the template hasn't been compiled yet, then compile.
+				if (!JST[path].__compiled__) {
+					JST[path] = Handlebars.template(JST[path]);
+					JST[path].__compiled__ = true;
+				}
+
+				return JST[path];
+			}
+		});
+
+		// Mix Backbone.Events, modules, and layout management into the app object.
+		return _.extend(app, {
+			// Create a custom object with a nested Views object.
+			module: function(additionalProps) {
+				return _.extend({
+					Views: {}
+				}, additionalProps);
+			},
+
+			// Helper for using layouts.
+			useLayout: function(name, options) {
+				// If already using this Layout, then don't re-inject into the DOM.
+				if (this.layout && this.layout.options.template === name) {
+					return this.layout;
+				}
+
+				// If a layout already exists, remove it from the DOM.
+				if (this.layout) {
+					this.layout.remove();
+				}
+
+				// Create a new Layout with options.
+				var layout = new Backbone.Layout(_.extend({
+					template: name,
+					className: "layout " + name,
+					id: "layout"
+				}, options));
+
+				// Insert into the DOM.
+				$("#main").empty().append(layout.el);
+
+				// Render the layout.
+				layout.render();
+
+				// Cache the refererence.
+				this.layout = layout;
+
+				// Return the reference, for chainability.
+				return layout;
+			}
+		}, Backbone.Events);
+
+	});
+/*jshint undef : true*/
+/*globals define:true , window: true*/
+define('modules/core/logger',["app"],
+
+function(app) {
+	
+
+	var Logger = {
+		ENABLEALL: true,
+		log: function(topic,content) {
+
+			if(window.console && ( !! Logger.ENABLEALL || ( !! topic && !! Logger.enable && Logger.enable[topic]))) {
+
+				window.console.log(content);
+
+
+			}
+		}
+	};
+
+	if(window.console) {
+		Logger.error = window.console.error;
+	} else {
+		Logger.error = function(){};
+	}
+	return Logger;
+});
+/*!
+ * AmplifyJS 1.1.0 - Core, Store, Request
+ * 
+ * Copyright 2011 appendTo LLC. (http://appendto.com/team)
+ * Dual licensed under the MIT or GPL licenses.
+ * http://appendto.com/open-source-licenses
+ * 
+ * http://amplifyjs.com
+ */
+/*!
+ * Amplify Core 1.1.0
+ * 
+ * Copyright 2011 appendTo LLC. (http://appendto.com/team)
+ * Dual licensed under the MIT or GPL licenses.
+ * http://appendto.com/open-source-licenses
+ * 
+ * http://amplifyjs.com
+ */
+(function( global, undefined ) {
+
+var slice = [].slice,
+	subscriptions = {};
+
+var amplify = global.amplify = {
+	publish: function( topic ) {
+		var args = slice.call( arguments, 1 ),
+			topicSubscriptions,
+			subscription,
+			length,
+			i = 0,
+			ret;
+
+		if ( !subscriptions[ topic ] ) {
+			return true;
+		}
+
+		topicSubscriptions = subscriptions[ topic ].slice();
+		for ( length = topicSubscriptions.length; i < length; i++ ) {
+			subscription = topicSubscriptions[ i ];
+			ret = subscription.callback.apply( subscription.context, args );
+			if ( ret === false ) {
+				break;
+			}
+		}
+		return ret !== false;
+	},
+
+	subscribe: function( topic, context, callback, priority ) {
+		if ( arguments.length === 3 && typeof callback === "number" ) {
+			priority = callback;
+			callback = context;
+			context = null;
+		}
+		if ( arguments.length === 2 ) {
+			callback = context;
+			context = null;
+		}
+		priority = priority || 10;
+
+		var topicIndex = 0,
+			topics = topic.split( /\s/ ),
+			topicLength = topics.length,
+			added;
+		for ( ; topicIndex < topicLength; topicIndex++ ) {
+			topic = topics[ topicIndex ];
+			added = false;
+			if ( !subscriptions[ topic ] ) {
+				subscriptions[ topic ] = [];
+			}
+	
+			var i = subscriptions[ topic ].length - 1,
+				subscriptionInfo = {
+					callback: callback,
+					context: context,
+					priority: priority
+				};
+	
+			for ( ; i >= 0; i-- ) {
+				if ( subscriptions[ topic ][ i ].priority <= priority ) {
+					subscriptions[ topic ].splice( i + 1, 0, subscriptionInfo );
+					added = true;
+					break;
+				}
+			}
+
+			if ( !added ) {
+				subscriptions[ topic ].unshift( subscriptionInfo );
+			}
+		}
+
+		return callback;
+	},
+
+	unsubscribe: function( topic, callback ) {
+		if ( !subscriptions[ topic ] ) {
+			return;
+		}
+
+		var length = subscriptions[ topic ].length,
+			i = 0;
+
+		for ( ; i < length; i++ ) {
+			if ( subscriptions[ topic ][ i ].callback === callback ) {
+				subscriptions[ topic ].splice( i, 1 );
+				break;
+			}
+		}
+	}
+};
+
+}( this ) );
+/*!
+ * Amplify Store - Persistent Client-Side Storage 1.1.0
+ * 
+ * Copyright 2011 appendTo LLC. (http://appendto.com/team)
+ * Dual licensed under the MIT or GPL licenses.
+ * http://appendto.com/open-source-licenses
+ * 
+ * http://amplifyjs.com
+ */
+(function( amplify, undefined ) {
+
+var store = amplify.store = function( key, value, options, type ) {
+	var type = store.type;
+	if ( options && options.type && options.type in store.types ) {
+		type = options.type;
+	}
+	return store.types[ type ]( key, value, options || {} );
+};
+
+store.types = {};
+store.type = null;
+store.addType = function( type, storage ) {
+	if ( !store.type ) {
+		store.type = type;
+	}
+
+	store.types[ type ] = storage;
+	store[ type ] = function( key, value, options ) {
+		options = options || {};
+		options.type = type;
+		return store( key, value, options );
+	};
+}
+store.error = function() {
+	return "amplify.store quota exceeded"; 
+};
+
+var rprefix = /^__amplify__/;
+function createFromStorageInterface( storageType, storage ) {
+	store.addType( storageType, function( key, value, options ) {
+		var storedValue, parsed, i, remove,
+			ret = value,
+			now = (new Date()).getTime();
+
+		if ( !key ) {
+			ret = {};
+			remove = [];
+			i = 0;
+			try {
+				// accessing the length property works around a localStorage bug
+				// in Firefox 4.0 where the keys don't update cross-page
+				// we assign to key just to avoid Closure Compiler from removing
+				// the access as "useless code"
+				// https://bugzilla.mozilla.org/show_bug.cgi?id=662511
+				key = storage.length;
+
+				while ( key = storage.key( i++ ) ) {
+					if ( rprefix.test( key ) ) {
+						parsed = JSON.parse( storage.getItem( key ) );
+						if ( parsed.expires && parsed.expires <= now ) {
+							remove.push( key );
+						} else {
+							ret[ key.replace( rprefix, "" ) ] = parsed.data;
+						}
+					}
+				}
+				while ( key = remove.pop() ) {
+					storage.removeItem( key );
+				}
+			} catch ( error ) {}
+			return ret;
+		}
+
+		// protect against name collisions with direct storage
+		key = "__amplify__" + key;
+
+		if ( value === undefined ) {
+			storedValue = storage.getItem( key );
+			parsed = storedValue ? JSON.parse( storedValue ) : { expires: -1 };
+			if ( parsed.expires && parsed.expires <= now ) {
+				storage.removeItem( key );
+			} else {
+				return parsed.data;
+			}
+		} else {
+			if ( value === null ) {
+				storage.removeItem( key );
+			} else {
+				parsed = JSON.stringify({
+					data: value,
+					expires: options.expires ? now + options.expires : null
+				});
+				try {
+					storage.setItem( key, parsed );
+				// quota exceeded
+				} catch( error ) {
+					// expire old data and try again
+					store[ storageType ]();
+					try {
+						storage.setItem( key, parsed );
+					} catch( error ) {
+						throw store.error();
+					}
+				}
+			}
+		}
+
+		return ret;
+	});
+}
+
+// localStorage + sessionStorage
+// IE 8+, Firefox 3.5+, Safari 4+, Chrome 4+, Opera 10.5+, iPhone 2+, Android 2+
+for ( var webStorageType in { localStorage: 1, sessionStorage: 1 } ) {
+	// try/catch for file protocol in Firefox
+	try {
+		if ( window[ webStorageType ].getItem ) {
+			createFromStorageInterface( webStorageType, window[ webStorageType ] );
+		}
+	} catch( e ) {}
+}
+
+// globalStorage
+// non-standard: Firefox 2+
+// https://developer.mozilla.org/en/dom/storage#globalStorage
+if ( window.globalStorage ) {
+	// try/catch for file protocol in Firefox
+	try {
+		createFromStorageInterface( "globalStorage",
+			window.globalStorage[ window.location.hostname ] );
+		// Firefox 2.0 and 3.0 have sessionStorage and globalStorage
+		// make sure we default to globalStorage
+		// but don't default to globalStorage in 3.5+ which also has localStorage
+		if ( store.type === "sessionStorage" ) {
+			store.type = "globalStorage";
+		}
+	} catch( e ) {}
+}
+
+// userData
+// non-standard: IE 5+
+// http://msdn.microsoft.com/en-us/library/ms531424(v=vs.85).aspx
+(function() {
+	// IE 9 has quirks in userData that are a huge pain
+	// rather than finding a way to detect these quirks
+	// we just don't register userData if we have localStorage
+	if ( store.types.localStorage ) {
+		return;
+	}
+
+	// append to html instead of body so we can do this from the head
+	var div = document.createElement( "div" ),
+		attrKey = "amplify";
+	div.style.display = "none";
+	document.getElementsByTagName( "head" )[ 0 ].appendChild( div );
+
+	// we can't feature detect userData support
+	// so just try and see if it fails
+	// surprisingly, even just adding the behavior isn't enough for a failure
+	// so we need to load the data as well
+	try {
+		div.addBehavior( "#default#userdata" );
+		div.load( attrKey );
+	} catch( e ) {
+		div.parentNode.removeChild( div );
+		return;
+	}
+
+	store.addType( "userData", function( key, value, options ) {
+		div.load( attrKey );
+		var attr, parsed, prevValue, i, remove,
+			ret = value,
+			now = (new Date()).getTime();
+
+		if ( !key ) {
+			ret = {};
+			remove = [];
+			i = 0;
+			while ( attr = div.XMLDocument.documentElement.attributes[ i++ ] ) {
+				parsed = JSON.parse( attr.value );
+				if ( parsed.expires && parsed.expires <= now ) {
+					remove.push( attr.name );
+				} else {
+					ret[ attr.name ] = parsed.data;
+				}
+			}
+			while ( key = remove.pop() ) {
+				div.removeAttribute( key );
+			}
+			div.save( attrKey );
+			return ret;
+		}
+
+		// convert invalid characters to dashes
+		// http://www.w3.org/TR/REC-xml/#NT-Name
+		// simplified to assume the starting character is valid
+		// also removed colon as it is invalid in HTML attribute names
+		key = key.replace( /[^-._0-9A-Za-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u37f-\u1fff\u200c-\u200d\u203f\u2040\u2070-\u218f]/g, "-" );
+
+		if ( value === undefined ) {
+			attr = div.getAttribute( key );
+			parsed = attr ? JSON.parse( attr ) : { expires: -1 };
+			if ( parsed.expires && parsed.expires <= now ) {
+				div.removeAttribute( key );
+			} else {
+				return parsed.data;
+			}
+		} else {
+			if ( value === null ) {
+				div.removeAttribute( key );
+			} else {
+				// we need to get the previous value in case we need to rollback
+				prevValue = div.getAttribute( key );
+				parsed = JSON.stringify({
+					data: value,
+					expires: (options.expires ? (now + options.expires) : null)
+				});
+				div.setAttribute( key, parsed );
+			}
+		}
+
+		try {
+			div.save( attrKey );
+		// quota exceeded
+		} catch ( error ) {
+			// roll the value back to the previous value
+			if ( prevValue === null ) {
+				div.removeAttribute( key );
+			} else {
+				div.setAttribute( key, prevValue );
+			}
+
+			// expire old data and try again
+			store.userData();
+			try {
+				div.setAttribute( key, parsed );
+				div.save( attrKey );
+			} catch ( error ) {
+				// roll the value back to the previous value
+				if ( prevValue === null ) {
+					div.removeAttribute( key );
+				} else {
+					div.setAttribute( key, prevValue );
+				}
+				throw store.error();
+			}
+		}
+		return ret;
+	});
+}() );
+
+// in-memory storage
+// fallback for all browsers to enable the API even if we can't persist data
+(function() {
+	var memory = {},
+		timeout = {};
+
+	function copy( obj ) {
+		return obj === undefined ? undefined : JSON.parse( JSON.stringify( obj ) );
+	}
+
+	store.addType( "memory", function( key, value, options ) {
+		if ( !key ) {
+			return copy( memory );
+		}
+
+		if ( value === undefined ) {
+			return copy( memory[ key ] );
+		}
+
+		if ( timeout[ key ] ) {
+			clearTimeout( timeout[ key ] );
+			delete timeout[ key ];
+		}
+
+		if ( value === null ) {
+			delete memory[ key ];
+			return null;
+		}
+
+		memory[ key ] = value;
+		if ( options.expires ) {
+			timeout[ key ] = setTimeout(function() {
+				delete memory[ key ];
+				delete timeout[ key ];
+			}, options.expires );
+		}
+
+		return value;
+	});
+}() );
+
+}( this.amplify = this.amplify || {} ) );
+/*!
+ * Amplify Request 1.1.0
+ * 
+ * Copyright 2011 appendTo LLC. (http://appendto.com/team)
+ * Dual licensed under the MIT or GPL licenses.
+ * http://appendto.com/open-source-licenses
+ * 
+ * http://amplifyjs.com
+ */
+(function( amplify, undefined ) {
+
+function noop() {}
+function isFunction( obj ) {
+	return ({}).toString.call( obj ) === "[object Function]";
+}
+
+function async( fn ) {
+	var isAsync = false;
+	setTimeout(function() {
+		isAsync = true;
+	}, 1 );
+	return function() {
+		var that = this,
+			args = arguments;
+		if ( isAsync ) {
+			fn.apply( that, args );
+		} else {
+			setTimeout(function() {
+				fn.apply( that, args );
+			}, 1 );
+		}
+	};
+}
+
+amplify.request = function( resourceId, data, callback ) {
+	// default to an empty hash just so we can handle a missing resourceId
+	// in one place
+	var settings = resourceId || {};
+
+	if ( typeof settings === "string" ) {
+		if ( isFunction( data ) ) {
+			callback = data;
+			data = {};
+		}
+		settings = {
+			resourceId: resourceId,
+			data: data || {},
+			success: callback
+		};
+	}
+
+	var request = { abort: noop },
+		resource = amplify.request.resources[ settings.resourceId ],
+		success = settings.success || noop,
+		error = settings.error || noop;
+	settings.success = async( function( data, status ) {
+		status = status || "success";
+		amplify.publish( "request.success", settings, data, status );
+		amplify.publish( "request.complete", settings, data, status );
+		success( data, status );
+	});
+	settings.error = async( function( data, status ) {
+		status = status || "error";
+		amplify.publish( "request.error", settings, data, status );
+		amplify.publish( "request.complete", settings, data, status );
+		error( data, status );
+	});
+
+	if ( !resource ) {
+		if ( !settings.resourceId ) {
+			throw "amplify.request: no resourceId provided";
+		}
+		throw "amplify.request: unknown resourceId: " + settings.resourceId;
+	}
+
+	if ( !amplify.publish( "request.before", settings ) ) {
+		settings.error( null, "abort" );
+		return;
+	}
+
+	amplify.request.resources[ settings.resourceId ]( settings, request );
+	return request;
+};
+
+amplify.request.types = {};
+amplify.request.resources = {};
+amplify.request.define = function( resourceId, type, settings ) {
+	if ( typeof type === "string" ) {
+		if ( !( type in amplify.request.types ) ) {
+			throw "amplify.request.define: unknown type: " + type;
+		}
+
+		settings.resourceId = resourceId;
+		amplify.request.resources[ resourceId ] =
+			amplify.request.types[ type ]( settings );
+	} else {
+		// no pre-processor or settings for one-off types (don't invoke)
+		amplify.request.resources[ resourceId ] = type;
+	}
+};
+
+}( amplify ) );
+
+
+
+
+
+(function( amplify, $, undefined ) {
+
+var xhrProps = [ "status", "statusText", "responseText", "responseXML", "readyState" ],
+    rurlData = /\{([^\}]+)\}/g;
+
+amplify.request.types.ajax = function( defnSettings ) {
+	defnSettings = $.extend({
+		type: "GET"
+	}, defnSettings );
+
+	return function( settings, request ) {
+		var xhr,
+			url = defnSettings.url,
+			abort = request.abort,
+			ajaxSettings = $.extend( true, {}, defnSettings, { data: settings.data } ),
+			aborted = false,
+			ampXHR = {
+				readyState: 0,
+				setRequestHeader: function( name, value ) {
+					return xhr.setRequestHeader( name, value );
+				},
+				getAllResponseHeaders: function() {
+					return xhr.getAllResponseHeaders();
+				},
+				getResponseHeader: function( key ) {
+					return xhr.getResponseHeader( key );
+				},
+				overrideMimeType: function( type ) {
+					return xhr.overrideMideType( type );
+				},
+				abort: function() {
+					aborted = true;
+					try {
+						xhr.abort();
+					// IE 7 throws an error when trying to abort
+					} catch( e ) {}
+					handleResponse( null, "abort" );
+				},
+				success: function( data, status ) {
+					settings.success( data, status );
+				},
+				error: function( data, status ) {
+					settings.error( data, status );
+				}
+			};
+
+		amplify.publish( "request.ajax.preprocess",
+			defnSettings, settings, ajaxSettings, ampXHR );
+
+		$.extend( ajaxSettings, {
+			success: function( data, status ) {
+				handleResponse( data, status );
+			},
+			error: function( _xhr, status ) {
+				handleResponse( null, status );
+			},
+			beforeSend: function( _xhr, _ajaxSettings ) {
+				xhr = _xhr;
+				ajaxSettings = _ajaxSettings;
+				var ret = defnSettings.beforeSend ?
+					defnSettings.beforeSend.call( this, ampXHR, ajaxSettings ) : true;
+				return ret && amplify.publish( "request.before.ajax",
+					defnSettings, settings, ajaxSettings, ampXHR );
+			}
+		});
+		$.ajax( ajaxSettings );
+
+		function handleResponse( data, status ) {
+			$.each( xhrProps, function( i, key ) {
+				try {
+					ampXHR[ key ] = xhr[ key ];
+				} catch( e ) {}
+			});
+			// Playbook returns "HTTP/1.1 200 OK"
+			// TODO: something also returns "OK", what?
+			if ( /OK$/.test( ampXHR.statusText ) ) {
+				ampXHR.statusText = "success";
+			}
+			if ( data === undefined ) {
+				// TODO: add support for ajax errors with data
+				data = null;
+			}
+			if ( aborted ) {
+				status = "abort";
+			}
+			if ( /timeout|error|abort/.test( status ) ) {
+				ampXHR.error( data, status );
+			} else {
+				ampXHR.success( data, status );
+			}
+			// avoid handling a response multiple times
+			// this can happen if a request is aborted
+			// TODO: figure out if this breaks polling or multi-part responses
+			handleResponse = $.noop;
+		}
+
+		request.abort = function() {
+			ampXHR.abort();
+			abort.call( this );
+		};
+	};
+};
+
+
+
+amplify.subscribe( "request.ajax.preprocess", function( defnSettings, settings, ajaxSettings ) {
+	var mappedKeys = [],
+		data = ajaxSettings.data;
+
+	if ( typeof data === "string" ) {
+		return;
+	}
+
+	data = $.extend( true, {}, defnSettings.data, data );
+
+	ajaxSettings.url = ajaxSettings.url.replace( rurlData, function ( m, key ) {
+		if ( key in data ) {
+		    mappedKeys.push( key );
+		    return data[ key ];
+		}
+	});
+
+	// We delete the keys later so duplicates are still replaced
+	$.each( mappedKeys, function ( i, key ) {
+		delete data[ key ];
+	});
+
+	ajaxSettings.data = data;
+});
+
+
+
+amplify.subscribe( "request.ajax.preprocess", function( defnSettings, settings, ajaxSettings ) {
+	var data = ajaxSettings.data,
+		dataMap = defnSettings.dataMap;
+
+	if ( !dataMap || typeof data === "string" ) {
+		return;
+	}
+
+	if ( $.isFunction( dataMap ) ) {
+		ajaxSettings.data = dataMap( data );
+	} else {
+		$.each( defnSettings.dataMap, function( orig, replace ) {
+			if ( orig in data ) {
+				data[ replace ] = data[ orig ];
+				delete data[ orig ];
+			}
+		});
+		ajaxSettings.data = data;
+	}
+});
+
+
+
+var cache = amplify.request.cache = {
+	_key: function( resourceId, url, data ) {
+		data = url + data;
+		var length = data.length,
+			i = 0,
+			checksum = chunk();
+
+		while ( i < length ) {
+			checksum ^= chunk();
+		}
+
+		function chunk() {
+			return data.charCodeAt( i++ ) << 24 |
+				data.charCodeAt( i++ ) << 16 |
+				data.charCodeAt( i++ ) << 8 |
+				data.charCodeAt( i++ ) << 0;
+		}
+
+		return "request-" + resourceId + "-" + checksum;
+	},
+
+	_default: (function() {
+		var memoryStore = {};
+		return function( resource, settings, ajaxSettings, ampXHR ) {
+			// data is already converted to a string by the time we get here
+			var cacheKey = cache._key( settings.resourceId,
+					ajaxSettings.url, ajaxSettings.data ),
+				duration = resource.cache;
+
+			if ( cacheKey in memoryStore ) {
+				ampXHR.success( memoryStore[ cacheKey ] );
+				return false;
+			}
+			var success = ampXHR.success;
+			ampXHR.success = function( data ) {
+				memoryStore[ cacheKey ] = data;
+				if ( typeof duration === "number" ) {
+					setTimeout(function() {
+						delete memoryStore[ cacheKey ];
+					}, duration );
+				}
+				success.apply( this, arguments );
+			};
+		};
+	}())
+};
+
+if ( amplify.store ) {
+	$.each( amplify.store.types, function( type ) {
+		cache[ type ] = function( resource, settings, ajaxSettings, ampXHR ) {
+			var cacheKey = cache._key( settings.resourceId,
+					ajaxSettings.url, ajaxSettings.data ),
+				cached = amplify.store[ type ]( cacheKey );
+
+			if ( cached ) {
+				ajaxSettings.success( cached );
+				return false;
+			}
+			var success = ampXHR.success;
+			ampXHR.success = function( data ) {	
+				amplify.store[ type ]( cacheKey, data, { expires: resource.cache.expires } );
+				success.apply( this, arguments );
+			};
+		};
+	});
+	cache.persist = cache[ amplify.store.type ];
+}
+
+amplify.subscribe( "request.before.ajax", function( resource ) {
+	var cacheType = resource.cache;
+	if ( cacheType ) {
+		// normalize between objects and strings/booleans/numbers
+		cacheType = cacheType.type || cacheType;
+		return cache[ cacheType in cache ? cacheType : "_default" ]
+			.apply( this, arguments );
+	}
+});
+
+
+
+amplify.request.decoders = {
+	// http://labs.omniti.com/labs/jsend
+	jsend: function( data, status, ampXHR, success, error ) {
+		if ( data.status === "success" ) {
+			success( data.data );
+		} else if ( data.status === "fail" ) {
+			error( data.data, "fail" );
+		} else if ( data.status === "error" ) {
+			delete data.status;
+			error( data, "error" );
+		}
+	}
+};
+
+amplify.subscribe( "request.before.ajax", function( resource, settings, ajaxSettings, ampXHR ) {
+	var _success = ampXHR.success,
+		_error = ampXHR.error,
+		decoder = $.isFunction( resource.decoder )
+			? resource.decoder
+			: resource.decoder in amplify.request.decoders
+				? amplify.request.decoders[ resource.decoder ]
+				: amplify.request.decoders._default;
+
+	if ( !decoder ) {
+		return;
+	}
+
+	function success( data, status ) {
+		_success( data, status );
+	}
+	function error( data, status ) {
+		_error( data, status );
+	}
+	ampXHR.success = function( data, status ) {
+		decoder( data, status, ampXHR, success, error );
+	};
+	ampXHR.error = function( data, status ) {
+		decoder( data, status, ampXHR, success, error );
+	};
+});
+
+}( amplify, jQuery ) );
+
+define("amplify", ["jquery"], (function (global) {
+    return function () {
+        var ret, fn;
+        return ret || global.amplify;
+    };
+}(this)));
+
+/*jshint undef : true*/
+/*globals define:true*/
+define('modules/core/ControllerBase',["app","backbone"],
+
+function(app,Backbone) {
+	var ControllerBase = Backbone.Model.extend({
+		initializeView: function() {
+			throw "abstract";
+		}
+	});
+
+	return ControllerBase;
+});
+/*jshint undef : true*/
+/*globals define:true*/
+define('modules/core/constants',[], function() {
+
+	var constants = {
+		
+	};
+
+	return constants;
+});
+/*jshint undef : true*/
+/*globals define:true*/
+define('modules/core/core',[ // LIB
+	"amplify",
+
+	"app", "modules/core/logger", "modules/core/ControllerBase", "modules/core/constants"
+],
+
+function(Amplify, app, logger, ControllerBase, Constants) {
+	var core = {};
+	core.Logger = logger;
+	core.ControllerBase = ControllerBase;
+	core.Amplify = Amplify;
+	core.Constants = Constants;
+
+	if (typeof String.prototype.trim !== 'function') {
+		String.prototype.trim = function() {
+			return this.replace(/^\s+|\s+$/g, '');
+		};
+	}
+
+	return core;
+
+});
+define('router',[
+	// Application.
+	"backbone", "app", "modules/core/core"
+],
+
+function(Backbone, app, Core) {
+	var Router, routeFunction = function(controllerName, param, param2) {
+			Core.Logger.log('router', 'ROUTING: ' + controllerName + 'with params : ' + param + 'with params2 : ' + param2);
+
+			if (controllerName.indexOf('?') > -1) {
+				controllerName = controllerName.split("?")[0];
+			}
+
+
+			var controller = this.controllers[controllerName];
+			if ( !! controller) {
+				Core.Logger.log('router', 'calling initializeView for ' + controllerName);
+
+				controller.initializeView.apply(controller, Array.prototype.slice.call(arguments, 1));
+			} else {
+				// TODO do something!!!!!
+			}
+		};
+	// Defining the application router, you can attach sub routers here.
+	Router = Backbone.Router.extend({
+		routes: {
+			"": "index",
+			"/": "index"
+		},
+		controllers: {},
+		setController: function(name, controller) {
+			this.controllers[name] = controller;
+		},
+
+		initialize: function(options) {
+			var main = app.useLayout("main");
+			app.Main = main;
+			this.routeFunction = routeFunction;
+
+			this.route("app/:controllerName", "routeFunction");
+			this.route("app/:controllerName/:param", "routeFunction");
+			this.route("app/:controllerName/:param/:param2", "routeFunction");
+			this.route("app/:controllerName/", "routeFunction");
+			this.route("app/:controllerName/:param/", "routeFunction");
+			this.route("app/:controllerName/:param/:param2/", "routeFunction");
+
+			this.route("app/:controllerName", "routeFunction");
+			this.route("app/:controllerName/", "routeFunction");
+
+			this.route("app/:controllerName/:param", "routeFunction");
+			this.route("app/:controllerName/:param/:param2", "routeFunction");
+
+			this.route("app/:controllerName/chart/:charttype", "routeFunction");
+			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/", "routeFunction");
+			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo", "routeFunction");			
+			this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo/group/:groupVar", "routeFunction");
+
+		},
+		index: function() {
+
+			this.navigate("main", {
+				trigger: true
+			});
+
+		}
+	});
+	// Define your master router on the application namespace and trigger all
+	// navigation from this instance.
+	app.router = new Router();
+	app.Router = app.router;
+	return app.router;
+
+});
+define('helpers',["handlebars"],
+
+	function(Handlebars) {
+		var originalCompile = Handlebars.compile;
+
+		Handlebars.compile = function(program, options) {
+			if (!options) {
+				options = {
+					data: true,
+					stringParams: true
+				};
+			}
+
+			return originalCompile.call(this, program, options);
+		};
+
+		var id = 0;
+		window.actionCollection = [];
+
+		Handlebars.registerHelper('action', function(actionName, other) {
+			var options = arguments[arguments.length - 1];
+			var count = window.actionCollection.length;
+			window.actionCollection.push(function() {
+				if ( !! other.contexts[0][actionName]) {
+					other.contexts[0][actionName].call(other.contexts[0]);
+				} else {
+					other.contexts[0].options[actionName].call(other.contexts[0]);
+				}
+			});
+
+			return new Handlebars.SafeString(options.hash.on + "='actionCollection[" + count + "]()'");
+		});
+
+		Handlebars.registerHelper('i18n', function(propertyName, view) {
+			var propertyArray, replaceArray, i, result, internationalizedString, options = arguments[arguments.length - 1];
+
+			if ( !! propertyName) {
+				propertyArray = propertyName.split('.');
+				if ( !! window.mobile && !! window.mobile.i18n) {
+					result = window.mobile.i18n;
+				} else {
+					throw "i18n not defined";
+				}
+				for (i = 0; i < propertyArray.length; i++) {
+					result = result[propertyArray[i]];
+				}
+
+				if ( !! options.hash.replace) {
+					replaceArray = options.hash.replace.split(',');
+					for (i = 0; i < replaceArray.length; i++) {
+						result = result.replace('{' + i + '}', view.contexts[0][replaceArray[i]]);
+					}
+				}
+			}
+			if ( !! result) {
+				internationalizedString = new Handlebars.SafeString(result);
+			} else {
+				if ( !! window.console && !! window.console.error) {
+					window.console.error('Error occurred when looking for key ' + propertyName);
+				}
+			}
+			return internationalizedString;
+		});
+
+		Handlebars.registerHelper('bind', function(propertyName) {
+			var options = arguments[arguments.length - 1];
+			var context = options.contexts[0];
+			var _id = id;
+			id++;
+			context.model.on("change:" + propertyName, function() {
+				context.$el.find('#bind_variable_' + _id).html(context.model.get(propertyName));
+			});
+
+			return new Handlebars.SafeString("<span type='text/x-placeholder' id='bind_variable_" + _id + "'>" + context.model.get(propertyName) + "</span>");
+		});
+
+		Handlebars.registerHelper('if', function(propertyName, options) {
+			var propertyArray, i, result;
+			if ( !! propertyName) {
+				propertyArray = propertyName.split('.');
+				if ( !! options) {
+					result = options.contexts[0]; // options.contexts[0]
+					// eh a view
+				} else {
+					throw "view not defined";
+				}
+				for (i = 0; i < propertyArray.length; i++) {
+					result = result[propertyArray[i]];
+				}
+				if (typeof result === 'undefined') {
+					return options.inverse(this);
+				}
+				if (typeof result === 'function') {
+					return (result.call(options.contexts[0])) ? options.fn(this) : options.inverse(this);
+				}
+				if (typeof result.length !== 'undefined') {
+					return ( !! result.length) ? options.fn(this) : options.inverse(this);
+				}
+				return ( !! result) ? options.fn(this) : options.inverse(this);
+
+			}
+			return options.inverse(this);
+		});
+
+		Handlebars.registerHelper('call', function(propertyName, options) {
+			var view = options.contexts[0];
+			if (typeof view[propertyName] !== 'undefined') {
+				if (typeof view[propertyName] === 'function') {
+					return view[propertyName].call(view);
+				} else {
+					return view[propertyName];
+				}
+			}
+		});
+		Handlebars.registerHelper('each', function(propertyName, options) {
+			var propertyArray, i, result = "",
+				viewAttribute;
+			if ( !! propertyName) {
+				propertyArray = propertyName.split('.');
+				if ( !! options) {
+					viewAttribute = options.contexts[0]; // options.contexts[0]
+					// eh a view
+				} else {
+					throw "view not defined";
+				}
+				for (i = 0; i < propertyArray.length; i++) {
+					try {
+						viewAttribute = viewAttribute[propertyArray[i]];
+					} catch (err) {
+						return "";
+					}
+				}
+				if (typeof viewAttribute.length !== 'undefined') {
+					if (typeof viewAttribute === 'function') {
+						viewAttribute = viewAttribute();
+					}
+					for (i = 0; i < viewAttribute.length; i++) {
+						result += options.fn(viewAttribute[i]);
+					}
+				}
+			}
+			return result;
+		});
+	});
 /*jshint undef : true*/
 /*globals define:true , window:true*/
 define('modules/main/view/mainView',["backbone", "app", "modules/core/core", "lodash", "d3"],
@@ -29232,7 +30447,7 @@ require.config({
     amplify: "../assets/js/libs/amplify",
     JSON: "../assets/js/libs/json2",
     d3: "../assets/js/libs/d3.v3",
-    bootstrap:"../assets/js/libs/bootstrap.js"
+    bootstrap:"../assets/js/libs/bootstrap"
 
 
   },
