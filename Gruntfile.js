@@ -4,7 +4,7 @@
 module.exports = function(grunt) {
   grunt.task.loadNpmTasks("grunt-contrib");
   grunt.task.loadNpmTasks("grunt-bbb-styles");
-  
+
 
   grunt.initConfig({
 
@@ -12,7 +12,7 @@ module.exports = function(grunt) {
     // that no files linger from previous builds.
     clean: ["dist/"],
 
-  
+
 
     // The jshint option for scripturl is set to lax, because the anchor
     // override inside main.js needs to test for them so as to not accidentally
@@ -57,7 +57,7 @@ module.exports = function(grunt) {
       }
     },
 
-    
+
 
     // This task uses the MinCSS Node.js project to take all your CSS files in
     // order and concatenate them into a single CSS file named index.css.  It
@@ -112,7 +112,9 @@ module.exports = function(grunt) {
     //  until documentation has been written.
     server: {
       // Ensure the favicon is mapped correctly.
-      files: { "favicon.ico": "favicon.ico" },
+      files: {
+        "favicon.ico": "favicon.ico"
+      },
 
       debug: {
         // Ensure the favicon is mapped correctly.
@@ -145,17 +147,22 @@ module.exports = function(grunt) {
     // This task uses James Burke's excellent r.js AMD build tool.  In the
     // future other builders may be contributed as drop-in alternatives.
     requirejs: {
-      // Include the main configuration file.
-      mainConfigFile: "app/config.js",
+      compile: {
+        options: {
+          // Include the main configuration file.
+          mainConfigFile: "app/config.js",
 
-      // Output file.
-      out: "dist/debug/require.js",
+          // Output file.
+          out: "dist/debug/require.js",
 
-      // Root application module.
-      name: "config",
+          // Root application module.
+          name: "config",
 
-      // Do not wrap everything in an IIFE.
-      wrap: false
+          // Do not wrap everything in an IIFE.
+          wrap: false
+        }
+      },
+
     },
 
     // The headless QUnit testing environment is provided for "free" by Grunt.
@@ -201,7 +208,7 @@ module.exports = function(grunt) {
 
   });
 
-  grunt.registerTask("debug1", "styles");
+  grunt.registerTask("debug1", "requirejs");
 
   // The debug task will remove all contents inside the dist/ folder, lint
   // all your code, precompile all the underscore templates into
@@ -234,5 +241,5 @@ module.exports = function(grunt) {
 
   var _ = grunt.util._;
 
-  
+
 };
