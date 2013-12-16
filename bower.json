@@ -1,0 +1,22 @@
+{
+  "name": "base-js",
+  "version": "0.0.1",
+  "homepage": "https://github.com/marcusdb/base-js",
+  "authors": [
+    "marcus <marcusdb@gmail.com>"
+  ],
+  "description": "base backbone boilerplate",
+  "main": "Gruntfile.js",
+  "keywords": [
+    "backbone"
+  ],
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}

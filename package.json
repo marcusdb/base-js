@@ -1,0 +1,46 @@
+{
+  "name": "base-js",
+  "description": "Another Backbone Boilerplate Build Tool",
+  "version": "0.0.1",
+  "homepage": "https://github.com/marcusdb/base-js",
+  "author": {
+    "name": "Marcus David Bronstein",
+    "email": "marcusdb@yahoo.com",
+    "url": "https://about.me/marcusdb"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/marcusdb/base-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marcusdb/base-js/issues"
+  },
+  "dependencies": {
+    "grunt": "~0.4.2",
+    "grunt-contrib": "0.8.0",
+    "grunt-bbb-server":"0.1.0-alpha.13",
+    "grunt-bbb-styles":"0.1.0-alpha.5",
+    "grunt-jasmine-task": "0.2.3",
+    "requirejs": "2.1.9", 
+    "express": "3.4.7",
+    "stylus": "0.41.3",
+    "nib": "1.0.1",
+    "cssom": "0.3.0"
+  },
+  "devDependencies": {
+    "grunt": "~0.4.2"
+  },
+  "keywords": [
+    "gruntplugin","Backbone"
+  ],
+  "engines": {
+    "node": ">= 0.10.a"
+  },
+  "main": "grunt.js",
+  "scripts": {
+    "test": "grunt test"
+  },
+  "readme": "Another Backbone Boilerplate framework tool.\n\n## License\nCopyright (c) 2013 Marcus Bronstein (@marcusdb) forked from grunt-bbb version 0.1.16 (https://github.com/backbone-boilerplate) by  Tim Branyen @tbranyen  \nLicensed under the MIT license.\n"
+  
+  
+}
