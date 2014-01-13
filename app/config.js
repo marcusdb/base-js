@@ -1,57 +1,59 @@
 // Set the require.js configuration for your application.
 require.config({
 
-  // Initialize the application with the main application file.
-  deps: ["main"],
+    // Initialize the application with the main application file.
+    deps : [ "main" ],
 
-  paths: {
-    // JavaScript folders.
-    libs: "../assets/js/libs",
-    plugins: "../assets/js/plugins",
-    vendor: "../assets/vendor",
+    paths : {
+        // JavaScript folders.
+        libs : "../bower_components",
+        plugins : "../bower_components",
+        vendor : "../bower_components",
 
-    // Libraries.
-    jquery: "../assets/js/libs/jquery",
-    lodash: "../assets/js/libs/lodash",
-    backbone: "../assets/js/libs/backbone",
-    handlebars: "../assets/js/libs/handlebars-1.0.0.beta.6",
-    amplify: "../assets/js/libs/amplify",
-    JSON: "../assets/js/libs/json2",
-    d3: "../assets/js/libs/d3.v3",
-    bootstrap:"../assets/js/libs/bootstrap"
-
-
-  },
-
-  shim: {
-    bootstrap:{
-      exports: 'bootstrap'
-    },
-    d3: {
-      exports: 'd3'
+        // Libraries.
+        jquery : "../bower_components/jquery/jquery.min",
+        lodash : "../bower_components/lodash/dist/lodash",
+        backbone : "../bower_components/backbone/backbone",
+        handlebars : "../bower_components/handlebars/handlebars",
+        amplify : "../bower_components/amplify/lib/amplify",
+        JSON : "../bower_components/json2/json2",
+        base64 : "../bower_components/base64/base64",
+        layoutmanager : "../bower_components/layoutmanager/backbone.layoutmanager",
+        underscore : "../bower_components/underscore/underscore",
+        "jquery.cookie" : "../bower_components/jquery.cookie/jquery.cookie"/*
+                                       * ,
+                                       * "jquery.wipetouch" :
+                                       * "../assets/js/plugins/jquery.wipetouch",
+                                       * "jquery.jqtransform" :
+                                       * "../assets/js/plugins/jquery.jqtransform"
+                                       */
     },
 
-    // Backbone library depends on lodash and jQuery.
-    backbone: {
-      deps: ["lodash", "jquery"],
-      exports: "Backbone"
-    },
+    shim : {
+        // Backbone library depends on lodash and jQuery.
+        backbone : {
+            deps : [ "underscore", "lodash", "jquery" ],
+            exports : "Backbone"
+        },
+        underscore : {
+          exports : "_"
+        },
+        // Backbone library depends on lodash and jQuery.
+        layoutmanager : {
+            deps : [ "backbone", "underscore", "jquery" ],
+            exports : "layoutmanager"
+        },
 
-    // Handlebars has no dependencies.
-    handlebars: {
-      exports: "Handlebars"
-    },
+        // Handlebars has no dependencies.
+        handlebars : {
+          exports : "Handlebars"
+        },
 
-    amplify: {
-      deps: ["jquery"],
-      exports: "amplify"
-    },
+        amplify : {
+            deps : [ "jquery" ],
+            exports : "amplify"
+        },
 
-    // Backbone.LayoutManager depends on Backbone.
-    "plugins/backbone.layoutmanager": ["backbone"],
-    "helpers": ["handlebars"]
-
-
-  }
-
+        "helpers" : [ "handlebars" ]
+    }
 });

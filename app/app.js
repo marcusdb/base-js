@@ -1,102 +1,81 @@
 define([
-		// Libraries.
-		"JSON", "jquery", "lodash", "backbone", "handlebars","d3", "bootstrap",
+// Libraries.
+"JSON", "jquery", "lodash", "backbone", "handlebars",
 
-		// Plugins.
-		"plugins/backbone.layoutmanager", "plugins/jquery.cookie"
-	],
+// Plugins.
+"layoutmanager", "jquery.cookie" ],
 
-	function(JSON, $, _, Backbone, Handlebars) {
+function(JSON, $, _, Backbone, Handlebars, LayoutManager) {
+	// Configure LayoutManager with Backbone Boilerplate defaults.
+	LayoutManager.configure({
+	    // Allow LayoutManager to augment Backbone.View.prototype.
+	    manage : true,
 
-		// Provide a global location to place configuration settings and module
-		// creation.
-		var app = {
-			// The root path to run the application.
-			root: "/"
-		};
+	    // Indicate where templates are stored.
+	    prefix : "app/templates/",
+	    fetchTemplate : function(path) {
+		    var done;
 
-		// Localize or create a new JavaScript Template object.
-		var JST = window.JST = window.JST || {};
+		    // Add the html extension.
+		    path = path + ".html";
 
-		// Configure LayoutManager with Backbone Boilerplate defaults.
-		Backbone.LayoutManager.configure({
-			// Allow LayoutManager to augment Backbone.View.prototype.
-			manage: true,
+		    // If the template has not been loaded yet, then load.
+		    if (!window.JST[path]) {
+			    done = this.async();
+			    return $.ajax({
+				    url : app.root + path
+			    }).then(function(contents) {
+				    window.JST[path] = Handlebars.compile(contents);
+				    window.JST[path].__compiled__ = true;
 
-			paths: {
-				layout: "app/templates/layout/",
-				template: "app/templates/"
-			},
+				    done(window.JST[path]);
+			    });
+		    }
 
-			fetch: function(path) {
-				var done;
-
-				// Add the html extension.
-				path = path + ".html";
-
-				// If the template has not been loaded yet, then load.
-				if (!JST[path]) {
-					done = this.async();
-					return $.ajax({
-						url: app.root + path
-					}).then(function(contents) {
-						JST[path] = Handlebars.compile(contents);
-						JST[path].__compiled__ = true;
-
-						done(JST[path]);
-					});
-				}
-
-				// If the template hasn't been compiled yet, then compile.
-				if (!JST[path].__compiled__) {
-					JST[path] = Handlebars.template(JST[path]);
-					JST[path].__compiled__ = true;
-				}
-
-				return JST[path];
-			}
-		});
-
-		// Mix Backbone.Events, modules, and layout management into the app object.
-		return _.extend(app, {
-			// Create a custom object with a nested Views object.
-			module: function(additionalProps) {
-				return _.extend({
-					Views: {}
-				}, additionalProps);
-			},
-
-			// Helper for using layouts.
-			useLayout: function(name, options) {
-				// If already using this Layout, then don't re-inject into the DOM.
-				if (this.layout && this.layout.options.template === name) {
-					return this.layout;
-				}
-
-				// If a layout already exists, remove it from the DOM.
-				if (this.layout) {
-					this.layout.remove();
-				}
-
-				// Create a new Layout with options.
-				var layout = new Backbone.Layout(_.extend({
-					template: name,
-					className: "layout " + name,
-					id: "layout"
-				}, options));
-
-				// Insert into the DOM.
-				$("#main").empty().append(layout.el);
-
-				// Render the layout.
-				layout.render();
-
-				// Cache the refererence.
-				this.layout = layout;
-
-				// Return the reference, for chainability.
-				return layout;
-			}
-		}, Backbone.Events);
+		    return window.JST[path];
+	    }
 
 	});
+
+	var app = {
+		// The root path to run the application.
+		root : "/"
+	};
+
+	// The application layout handles link hijacking and can be modified to
+	// handle other application global actions as well.
+	app.layout = new Backbone.View({
+	    el : "main",
+
+	    events : {
+		    "click a[href]:not([data-bypass])" : "hijackLinks"
+	    },
+
+	    hijackLinks : function(ev) {
+		    // Get the absolute anchor href.
+		    var href = {
+		        prop : $(this).prop("href"),
+		        attr : $(this).attr("href")
+		    };
+		    // Get the absolute root.
+		    var root = location.protocol + "//" + location.host + app.root;
+
+		    // Ensure the root is part of the anchor href, meaning it's
+		    // relative.
+		    if (href.prop.slice(0, root.length) === root) {
+			    // Stop the default event to ensure the link will not cause a
+			    // page
+			    // refresh.
+			    ev.preventDefault();
+
+			    // `Backbone.history.navigate` is sufficient for all Routers and
+			    // will
+			    // trigger the correct events. The Router's internal `navigate`
+			    // method
+			    // calls this anyways. The fragment is sliced from the root.
+			    Backbone.history.navigate(href.attr, true);
+		    }
+	    }
+	});
+	return app;
+});
