@@ -6,21 +6,21 @@ require.config({
 
     paths : {
         // JavaScript folders.
-        libs : "../bower_components",
-        plugins : "../bower_components",
-        vendor : "../bower_components",
+        libs : "../vendor/bower",
+        plugins : "../vendor/bower",
+        vendor : "../vendor/bower",
 
         // Libraries.
-        jquery : "../bower_components/jquery/jquery.min",
-        lodash : "../bower_components/lodash/dist/lodash",
-        backbone : "../bower_components/backbone/backbone",
-        handlebars : "../bower_components/handlebars/handlebars",
-        amplify : "../bower_components/amplify/lib/amplify",
-        JSON : "../bower_components/json2/json2",
-        base64 : "../bower_components/base64/base64",
-        layoutmanager : "../bower_components/layoutmanager/backbone.layoutmanager",
-        underscore : "../bower_components/underscore/underscore",
-        "jquery.cookie" : "../bower_components/jquery.cookie/jquery.cookie"/*
+        jquery : "../vendor/bower/jquery/jquery.min",
+        lodash : "../vendor/bower/lodash/dist/lodash",
+        backbone : "../vendor/bower/backbone/backbone",
+        handlebars : "../vendor/bower/handlebars/handlebars",
+        amplify : "../vendor/bower/amplify/lib/amplify",
+        JSON : "../vendor/bower/json2/json2",
+        base64 : "../vendor/bower/base64/base64",
+        layoutmanager : "../vendor/bower/layoutmanager/backbone.layoutmanager",
+        underscore : "../vendor/bower/underscore/underscore",
+        "jquery.cookie" : "../vendor/bower/jquery.cookie/jquery.cookie"/*
                                        * ,
                                        * "jquery.wipetouch" :
                                        * "../assets/js/plugins/jquery.wipetouch",
