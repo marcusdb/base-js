@@ -157,6 +157,7 @@ module.exports = function(grunt) {
 
           // Root application module.
           name: "config",
+          optimize:"none",
 
           // Do not wrap everything in an IIFE.
           wrap: false
