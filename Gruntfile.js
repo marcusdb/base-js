@@ -47,8 +47,9 @@ module.exports = function(grunt) {
       dist: {
         src: [
           "assets/js/libs/almond.js",
-          "dist/debug/templates.js",
-          "dist/debug/require.js"
+          "dist/debug/require.js",
+          "dist/debug/templates.js"
+
         ],
 
         dest: "dist/debug/require.js",
@@ -157,7 +158,7 @@ module.exports = function(grunt) {
 
           // Root application module.
           name: "config",
-          optimize:"none",
+          optimize: "none",
 
           // Do not wrap everything in an IIFE.
           wrap: false
@@ -196,16 +197,16 @@ module.exports = function(grunt) {
     // remove this, ensure concat is updated accordingly.
     handlebars: {
 
-       built : {
-            src : [ 'app/templates/**/*.html' ],
-            dest : '../webapp/resources/debug/templates.js',
-            options : {
-              compilerOptions : {
-                  data : true,
-                  stringParams : true
-              }
-            }
+      built: {
+        src: ['app/templates/**/*.html'],
+        dest: '../webapp/resources/debug/templates.js',
+        options: {
+          compilerOptions: {
+            data: true,
+            stringParams: true
+          }
         }
+      }
 
     },
 
@@ -218,11 +219,11 @@ module.exports = function(grunt) {
   // dist/debug/templates.js, compile all the application code into
   // dist/debug/require.js, and then concatenate the require/define shim
   // almond.js and dist/debug/templates.js into the require.js file.
-  grunt.registerTask("debug", ["clean","jshint","handlebars","requirejs","concat","styles"]);
+  grunt.registerTask("debug", ["clean", "jshint", "handlebars", "requirejs", "concat", "styles"]);
 
   // The release task will run the debug tasks and then minify the
   // dist/debug/require.js file and CSS files.
-  grunt.registerTask("release", ["debug","uglify","cssmin"]);
+  grunt.registerTask("release", ["debug", "uglify", "cssmin"]);
 
 
 
