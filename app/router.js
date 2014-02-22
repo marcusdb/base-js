@@ -6,16 +6,12 @@ define([
 	function(Backbone, app, Core) {
 		var Router, routeFunction = function(controllerName, param, param2) {
 				Core.Logger.log('router', 'ROUTING: ' + controllerName + 'with params : ' + param + 'with params2 : ' + param2);
-
 				if (controllerName.indexOf('?') > -1) {
 					controllerName = controllerName.split("?")[0];
 				}
-
-
 				var controller = this.controllers[controllerName];
 				if ( !! controller) {
 					Core.Logger.log('router', 'calling initializeView for ' + controllerName);
-
 					controller.initializeView.apply(controller, Array.prototype.slice.call(arguments, 1));
 				} else {
 					// TODO do something!!!!!
@@ -41,25 +37,26 @@ define([
 					template: window.JST["app/templates/layout/main.html"]
 				});
 				app.Main = main;
+				app.Main.render();
 				this.routeFunction = routeFunction;
 
-				this.route("app/:controllerName", "routeFunction");
-				this.route("app/:controllerName/:param", "routeFunction");
-				this.route("app/:controllerName/:param/:param2", "routeFunction");
-				this.route("app/:controllerName/", "routeFunction");
-				this.route("app/:controllerName/:param/", "routeFunction");
-				this.route("app/:controllerName/:param/:param2/", "routeFunction");
+				this.route(":controllerName", "routeFunction");
+				this.route(":controllerName/:param", "routeFunction");
+				this.route(":controllerName/:param/:param2", "routeFunction");
+				this.route(":controllerName/", "routeFunction");
+				this.route(":controllerName/:param/", "routeFunction");
+				this.route(":controllerName/:param/:param2/", "routeFunction");
 
-				this.route("app/:controllerName", "routeFunction");
-				this.route("app/:controllerName/", "routeFunction");
+				this.route(":controllerName", "routeFunction");
+				this.route(":controllerName/", "routeFunction");
 
-				this.route("app/:controllerName/:param", "routeFunction");
-				this.route("app/:controllerName/:param/:param2", "routeFunction");
+				this.route(":controllerName/:param", "routeFunction");
+				this.route(":controllerName/:param/:param2", "routeFunction");
 
-				this.route("app/:controllerName/chart/:charttype", "routeFunction");
-				this.route("app/:controllerName/chart/:charttype/from/:dateFrom/", "routeFunction");
-				this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo", "routeFunction");
-				this.route("app/:controllerName/chart/:charttype/from/:dateFrom/to/:dateTo/group/:groupVar", "routeFunction");
+				this.route(":controllerName/chart/:charttype", "routeFunction");
+				this.route(":controllerName/chart/:charttype/from/:dateFrom/", "routeFunction");
+				this.route(":controllerName/chart/:charttype/from/:dateFrom/to/:dateTo", "routeFunction");
+				this.route(":controllerName/chart/:charttype/from/:dateFrom/to/:dateTo/group/:groupVar", "routeFunction");
 
 			},
 			index: function() {
